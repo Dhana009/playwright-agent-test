@@ -8,6 +8,7 @@ from agent.cli.fix_cmd import fix as fix_command
 from agent.cli.human_session_cmd import app as human_session_app
 from agent.cli.mode_cmd import app as mode_app
 from agent.cli.record_cmd import record as record_command
+from agent.cli.ui_cmd import ui as ui_command
 from agent.cli.report_cmd import report as report_command
 from agent.cli.run_cmd import pause as pause_command
 from agent.cli.run_cmd import resume as resume_command
@@ -19,6 +20,7 @@ app = typer.Typer(
 )
 
 app.command("record")(record_command)
+app.command("ui")(ui_command)
 app.command("run")(run_command)
 app.command("resume")(resume_command)
 app.command("pause")(pause_command)

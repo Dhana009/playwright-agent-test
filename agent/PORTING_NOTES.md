@@ -185,7 +185,7 @@ Scope reviewed:
 
 ### JS-only/UI pieces to redesign in Python
 
-- Browser-injected panel UI (`lib/browser/panel-script.js`) should be replaced by CLI prompts and structured event output.
+- Full browser-injected panel UI (`lib/browser/panel-script.js`) is not ported wholesale; **Phase 6.3** adds an optional **minimal** HUD (`--browser-ui`) for record arm/disarm and finish. Broader review/recovery UX remains CLI/Typer-first unless expanded later.
 - `panel-api` calls that manipulate `window.__rec*` should become console/Typer interaction and event-log entries.
 - Readline-centric terminal shortcuts in recorder/replay modules should be replaced with explicit CLI subcommands and prompts.
 
@@ -279,6 +279,24 @@ What was implemented:
   - raw single-key capture on POSIX TTY terminals,
   - fallback to line input (`q` + Enter) for non-interactive terminals.
 - Wired command to `StepGraphRecorder` start/stop lifecycle and printed artifact paths (`stepgraph.json`, `manifest.json`) for immediate replay via `agent run <stepgraph_path>`.
+
+## Phase 6.3 - Minimal in-browser recorder HUD (optional)
+
+Implemented artifacts:
+- `agent/src/agent/recorder/recorder.py` (`_RECORDER_HUD_INIT_SCRIPT`, `__agentRecorderControl` binding, arm/disarm gating via `window.__agentRecorderArmed`, `delete_last_step`, finish signal)
+- `agent/src/agent/cli/record_cmd.py` (`--browser-ui`, `--record-armed-start`, wait for HUD **Finish** or terminal stop-key)
+
+Scope note:
+- This is intentionally **not** a port of [`playwright-repo-test/lib/browser/panel-script.js`](playwright-repo-test/lib/browser/panel-script.js) (full overlay, review grid, sessions). It is a **small** fixed HUD for operator control without terminal context-switching: arm/disarm capture, delete last step, mode select, Finish.
+- Default `agent record` is unchanged (no HUD, capture always on, same hotkey stop). Opt in with `--browser-ui` (starts **disarmed** unless `--record-armed-start`).
+- Deterministic helper: `agent/scripts/smoke/recorder_delete_last_smoke.py` exercises `delete_last_step` graph/edge cleanup without a browser.
+
+## Phase 6.4 - Local recorder dashboard (`agent ui`)
+
+Implemented artifacts:
+- `agent/src/agent/ui/dashboard.py` — `aiohttp` server on `127.0.0.1` (default port `8765`) serving `static/dashboard.html`
+- `agent/src/agent/cli/ui_cmd.py` — Typer entry `agent ui` (opens browser; Ctrl+C stops server and closes an active recorder)
+- `StepGraphRecorder(..., dashboard_control=True)` — same in-page **arm/disarm** gating as `--browser-ui` without injecting the small HUD; control comes from the dashboard via `apply_control_action` (arm, disarm, mode, `add_wait_for`, `add_assert_url`, delete last, finish signal for CLI)
 
 ## Phase 9.1 - Provider Abstraction
 
@@ -441,3 +459,22 @@ What was implemented:
 - Added deterministic locator fallback wiring in generated output via `LOCATOR_MAP` + `locatorFor(page, stepId)`.
 - Added action/assertion rendering for common step actions (`navigate`, `click`, `fill`, `type`, `press`, `check`, `select`, `upload`, visibility/text/value/count assertions, etc.).
 - Added async `PlaywrightSpecWriter` facade to load a run's `StepGraph` and emit `<run_id>.spec.ts` into the run folder by default.
+
+## Upload reliability — site contract (product / host app)
+
+Hand this section to **engineering owners of the page under test** (not the Playwright agent repo). Automation can mitigate bad DOM but cannot guarantee stable uploads if the app breaks HTML or hides the real control.
+
+**Do**
+
+- Give the real `<input type="file">` a **unique** `id` (no duplicate ids on one document).
+- Prefer a stable **`data-testid`** on the file input (e.g. `resume-file-input`) in addition to any marketing `upload-area` wrapper.
+- Keep the visible drop zone (`[data-testid="upload-area"]` or equivalent) for UX; wire it to **one** file input via `label for=`, or a single hidden input in a predictable parent.
+
+**Avoid**
+
+- **Duplicate** `id` values on multiple `<input type="file">` nodes (breaks `getElementById` semantics and confuses strict locator resolution).
+- Recording-only **inner** text nodes (`>> p`, `>> span`) as the sole upload target when the actionable surface is the wrapper.
+
+**Reference case**
+
+- Staging “AI Quotient” resume widget used duplicate `id="gql_get_resume"` on two file inputs; stable automation required fallback selectors and runner-side heuristics. Fixing the DOM removes that class of failure.

@@ -4,7 +4,9 @@ import asyncio
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import unquote
 
 from agent.cache.engine import CacheEngine
 from agent.cache.models import CacheDecision
@@ -177,6 +179,10 @@ class StepGraphRunner:
             )
         )
         self._logger.info("run_completed", run_id=graph.run_id)
+
+    async def run_one_step(self, graph: StepGraph, step: Step) -> None:
+        """Execute a single step (used by interactive / debugger-style UIs)."""
+        await self._run_step(graph, step)
 
     async def _run_step(self, graph: StepGraph, step: Step) -> None:
         tab_id = _get_tab_id(step)
@@ -636,7 +642,11 @@ class StepGraphRunner:
                 last_exc = exc
                 continue
 
-        raise RunnerError(f"Action '{action}' failed for all selectors.") from last_exc
+        detail = str(last_exc) if last_exc else ""
+        if len(detail) > 420:
+            detail = detail[:417] + "…"
+        suffix = f" Last error: {detail}" if detail else ""
+        raise RunnerError(f"Action '{action}' failed for all selectors.{suffix}") from last_exc
 
     async def _enforce_action_policy(
         self,
@@ -720,10 +730,14 @@ class StepGraphRunner:
 
 def _coerce_upload_paths(metadata: dict[str, Any]) -> str | list[str]:
     paths = metadata.get("filePaths") or metadata.get("file_paths") or metadata.get("files")
+
+    def _norm(p: str) -> str:
+        return str(Path(unquote(p.strip())).expanduser())
+
     if isinstance(paths, str) and paths.strip():
-        return paths
+        return _norm(paths)
     if isinstance(paths, list) and paths and all(isinstance(item, str) and item.strip() for item in paths):
-        return paths
+        return [_norm(item) for item in paths]
     raise RunnerError("upload requires metadata.filePaths (string or list of strings).")
 
 

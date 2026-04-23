@@ -16,7 +16,7 @@ from agent.recorder.recorder import RecorderArtifact, StepGraphRecorder
 app = typer.Typer(help="Record browser actions into a Step Graph.")
 LOGGER = get_logger(__name__)
 
-OperatorMode = Literal["auto", "click", "assert_visible", "assert_text"]
+OperatorMode = Literal["auto", "assert_visible", "assert_text"]
 
 
 def _supports_raw_hotkey() -> bool:
@@ -61,12 +61,18 @@ async def _record_once(
     storage_state: str | None,
     mode: OperatorMode,
     stop_key: str,
+    browser_ui: bool,
+    record_armed_start: bool,
+    default_record_upload_path: str | None,
 ) -> RecorderArtifact:
     recorder = StepGraphRecorder(
         url=url,
         run_id=run_id,
         headless=headless,
         storage_state=storage_state,
+        browser_ui=browser_ui,
+        recording_armed_start=record_armed_start,
+        default_record_upload_path=default_record_upload_path,
     )
     recorder.set_operator_mode(mode)
 
@@ -82,8 +88,27 @@ async def _record_once(
             stop_key=stop_key,
             headless=headless,
             storage_state=storage_state,
+            browser_ui=browser_ui,
+            record_armed_start=record_armed_start,
         )
-        await asyncio.to_thread(_wait_for_stop_hotkey_blocking, stop_key)
+        hotkey_task: asyncio.Task[str] = asyncio.create_task(
+            asyncio.to_thread(_wait_for_stop_hotkey_blocking, stop_key),
+        )
+        if browser_ui and recorder.finish_event is not None:
+            finish_task = asyncio.create_task(recorder.finish_event.wait())
+            done, pending = await asyncio.wait(
+                {hotkey_task, finish_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            del done
+        else:
+            await hotkey_task
     finally:
         if started:
             return await recorder.stop()
@@ -118,6 +143,25 @@ def record(
         max=1,
         help="Single-key hotkey used to stop recording.",
     ),
+    browser_ui: bool = typer.Option(
+        False,
+        "--browser-ui",
+        help="Show in-page HUD: arm/disarm capture, delete last step, mode, Finish (or press stop-key).",
+    ),
+    record_armed_start: bool = typer.Option(
+        False,
+        "--record-armed-start",
+        help="With --browser-ui, start with capture armed (default: disarmed).",
+    ),
+    upload_path: str | None = typer.Option(
+        None,
+        "--upload-path",
+        envvar="AGENT_RECORD_UPLOAD_PATH",
+        help=(
+            "Default file path(s) for detected upload steps (comma-separated). "
+            "Recorded into metadata.filePaths and applied live when the file exists (see playwright-repo-test recorder)."
+        ),
+    ),
 ) -> None:
     """
     Record user interactions from a live browser and persist a replayable Step Graph.
@@ -126,7 +170,12 @@ def record(
     stop_key_value = stop_key[0]
 
     typer.echo(f"Starting recorder for: {url}")
-    if _supports_raw_hotkey():
+    if browser_ui:
+        typer.echo(
+            "Browser UI: use the on-page panel to arm capture, then Finish when done. "
+            f"Or press '{stop_key_value}' in this terminal to stop.",
+        )
+    elif _supports_raw_hotkey():
         typer.echo(f"Press '{stop_key_value}' to stop recording.")
     else:
         typer.echo(f"Type '{stop_key_value}' then Enter to stop recording.")
@@ -140,6 +189,9 @@ def record(
                 storage_state=storage_state_value,
                 mode=mode,
                 stop_key=stop_key_value,
+                browser_ui=browser_ui,
+                record_armed_start=record_armed_start,
+                default_record_upload_path=(upload_path.strip() if upload_path else None),
             )
         )
     except KeyboardInterrupt:

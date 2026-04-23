@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Awaitable, Callable, Literal
+from urllib.parse import unquote
 
 from playwright.async_api import BrowserContext, Dialog, Frame, Locator, Page
 from pydantic import BaseModel, ConfigDict, Field
@@ -66,6 +69,143 @@ class FrameContextResult(ToolResult):
 
 
 ToolEventEmitter = Callable[[ToolCallEvent], Awaitable[None] | None]
+
+# Finds the real <input type=file> from a custom upload control (div/button/label), same
+# strategy as recorder __agentFindAssociatedFileInput. Returns a Playwright selector string.
+_UPLOAD_FILE_SELECTOR_FROM_TRIGGER_JS = """
+(el) => {
+  function fileIn(root) {
+    if (!root || !root.querySelector) return null;
+    return root.querySelector('input[type="file"],input[type=file]');
+  }
+  function fileInSubtreeBfs(start, maxNodes) {
+    if (!start || start.nodeType !== 1) return null;
+    const q = [start];
+    let seen = 0;
+    while (q.length && seen < maxNodes) {
+      const n = q.shift();
+      seen++;
+      if (!n || n.nodeType !== 1) continue;
+      const tag = n.tagName && n.tagName.toLowerCase();
+      const typ = String(n.getAttribute('type') || '').toLowerCase();
+      if (tag === 'input' && typ === 'file') return n;
+      if (n.shadowRoot) {
+        const sh = fileIn(n.shadowRoot);
+        if (sh) return sh;
+        let c = n.shadowRoot.firstElementChild;
+        while (c) { q.push(c); c = c.nextElementSibling; }
+      }
+      let ch = n.firstElementChild;
+      while (ch) { q.push(ch); ch = ch.nextElementSibling; }
+    }
+    return null;
+  }
+  function find(node) {
+    if (!node || node.nodeType !== 1) return null;
+    const tag = node.tagName.toLowerCase();
+    const typ = String(node.getAttribute('type') || '').toLowerCase();
+    if (tag === 'input' && typ === 'file') return node;
+    let inner = fileIn(node);
+    if (inner) return inner;
+    inner = fileInSubtreeBfs(node, 800);
+    if (inner) return inner;
+    let s = node.previousElementSibling;
+    while (s) {
+      const tg = s.tagName && s.tagName.toLowerCase();
+      const ty = String(s.getAttribute('type') || '').toLowerCase();
+      if (tg === 'input' && ty === 'file') return s;
+      inner = fileIn(s) || fileInSubtreeBfs(s, 400);
+      if (inner) return inner;
+      s = s.previousElementSibling;
+    }
+    s = node.nextElementSibling;
+    while (s) {
+      const tg = s.tagName && s.tagName.toLowerCase();
+      const ty = String(s.getAttribute('type') || '').toLowerCase();
+      if (tg === 'input' && ty === 'file') return s;
+      inner = fileIn(s) || fileInSubtreeBfs(s, 400);
+      if (inner) return inner;
+      s = s.nextElementSibling;
+    }
+    let p = node.parentElement;
+    for (let d = 0; d < 28 && p; d++) {
+      inner = fileIn(p) || fileInSubtreeBfs(p, 600);
+      if (inner) return inner;
+      p = p.parentElement;
+    }
+    return null;
+  }
+  const fi = find(el);
+  if (!fi) return null;
+  if (fi.id && typeof fi.id === 'string' && fi.id.trim()) {
+    const id = fi.id.trim();
+    return '#' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id);
+  }
+  const tid = fi.getAttribute('data-testid') || fi.getAttribute('data-test-id') || fi.getAttribute('data-qa');
+  if (tid) return '[data-testid=' + JSON.stringify(tid) + ']';
+  const nm = fi.getAttribute('name');
+  if (nm) return 'input[type=file][name=' + JSON.stringify(nm) + ']';
+  const al = fi.getAttribute('aria-label');
+  if (al) return 'input[type=file][aria-label=' + JSON.stringify(al) + ']';
+  const parts = [];
+  let cur = fi;
+  while (cur && cur.nodeType === 1) {
+    let idx = 1;
+    let sb = cur.previousElementSibling;
+    while (sb) {
+      if (sb.tagName === cur.tagName) idx++;
+      sb = sb.previousElementSibling;
+    }
+    const t = cur.tagName.toLowerCase();
+    parts.unshift(idx > 1 ? t + '[' + idx + ']' : t);
+    cur = cur.parentElement;
+  }
+  return 'xpath=/' + parts.join('/');
+}
+"""
+
+
+def _upload_playwright_selector_candidates(original: str) -> list[str]:
+    """Stable upload targets for flaky recordings (duplicate ids, ``>> nth`` on inputs, inner text nodes)."""
+    o = (original or "").strip()
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(s: str) -> None:
+        t = s.strip()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+
+    add(o)
+    # ``#gql_get_resume >> nth=0`` — ``#id`` is an <input>, chaining is meaningless; strip chain.
+    m_id_chain = re.match(r"^(#[A-Za-z0-9_-]+)\s*>>\s*nth=\d+$", o)
+    if m_id_chain:
+        add(m_id_chain.group(1))
+    # Prefer the dropzone root over ``[data-testid=upload-area] >> p`` / ``>> span``.
+    m_area = re.search(r'(\[data-testid=["\']upload-area["\']\])', o)
+    if m_area and ">>" in o:
+        add(m_area.group(1))
+    lo = o.lower()
+    # ``upload-file__upload-area`` does not contain the substring ``upload-area``; still treat as dropzone.
+    m_tid = re.search(r'data-testid\s*=\s*["\']([^"\']+)["\']', o, flags=re.I)
+    uploadish_dropzone = False
+    if m_tid:
+        tid_l = m_tid.group(1).lower()
+        if "upload" in tid_l and ("area" in tid_l or "drop" in tid_l or "zone" in tid_l or "file" in tid_l):
+            uploadish_dropzone = True
+            token = json.dumps(m_tid.group(1))
+            add(f"[data-testid={token}] input[type=file]")
+            add(f"[data-testid={token}] >> input[type=file]")
+    if (
+        "gql_get_resume" in lo
+        or "upload-area" in o
+        or "upload-file" in lo
+        or uploadish_dropzone
+        or ("upload" in lo and "data-testid" in lo and ("area" in lo or "file" in lo))
+    ):
+        add("input[type=file]>>nth=0")
+    return out
 
 
 class ToolRuntime:
@@ -351,16 +491,108 @@ class ToolRuntime:
         timeout_ms: float = 30_000,
     ) -> InteractionResult:
         async def _impl() -> InteractionResult:
-            locator, frame_path = await self._resolve_target_locator(tab_id, target)
-            normalized_paths = file_paths if isinstance(file_paths, list) else [file_paths]
-            await locator.set_input_files(normalized_paths, timeout=timeout_ms)
-            return InteractionResult(
-                tool="upload",
-                tabId=tab_id,
-                framePath=frame_path,
-                target=target,
-                details={"file_count": len(normalized_paths)},
-            )
+            raw_paths = file_paths if isinstance(file_paths, list) else [file_paths]
+            normalized_paths = [
+                str(Path(unquote(str(p).strip())).expanduser()) for p in raw_paths if str(p).strip()
+            ]
+            missing = [p for p in normalized_paths if not Path(p).is_file()]
+            if missing:
+                raise BrowserSessionError(
+                    "upload: file path is not an existing file (fix path or spaces vs literal %20 in the filename): "
+                    + "; ".join(missing[:4])
+                )
+            page = self._require_page(tab_id)
+
+            async def _try_upload_with_resolved_locator(
+                use_target: str,
+            ) -> InteractionResult:
+                locator, frame_path = await self._resolve_target_locator(tab_id, use_target)
+                frame = self._browser_session.resolve_frame_path(frame_path)
+                if frame is None:
+                    frame = page.main_frame
+
+                upload_method = "setInputFiles"
+                base_details: dict[str, Any] = {
+                    "file_count": len(normalized_paths),
+                    "selectorAttempt": use_target,
+                }
+
+                # Custom upload UIs: map trigger → real <input type=file> (in-page).
+                try:
+                    if await locator.count() > 0:
+                        sel_js = await locator.first.evaluate(_UPLOAD_FILE_SELECTOR_FROM_TRIGGER_JS)
+                        if isinstance(sel_js, str) and sel_js.strip():
+                            cand = sel_js.strip()
+                            if cand != use_target.strip():
+                                file_loc = frame.locator(cand).first
+                                if await file_loc.count() > 0:
+                                    await file_loc.set_input_files(normalized_paths, timeout=timeout_ms)
+                                    return InteractionResult(
+                                        tool="upload",
+                                        tabId=tab_id,
+                                        framePath=frame_path,
+                                        target=target,
+                                        details={
+                                            **base_details,
+                                            "uploadMethod": "js_resolved_file_input",
+                                            "resolvedSelector": cand,
+                                        },
+                                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
+                try:
+                    await locator.set_input_files(normalized_paths, timeout=timeout_ms)
+                except Exception:
+                    inner = locator.locator('input[type="file"],input[type=file]').first
+                    try:
+                        if await inner.count() > 0:
+                            await inner.set_input_files(normalized_paths, timeout=timeout_ms)
+                            upload_method = "nested_file_input"
+                        else:
+                            raise LookupError("no nested file input under locator")
+                    except Exception:
+                        assoc = await self._locator_associated_file_input(locator)
+                        if assoc is not None:
+                            await assoc.set_input_files(normalized_paths, timeout=timeout_ms)
+                            upload_method = "ancestor_file_input"
+                        else:
+                            fc_timeout = min(float(timeout_ms), 20_000.0)
+                            click_timeout = min(float(timeout_ms), 15_000.0)
+                            last_fc_exc: Exception | None = None
+                            for force in (False, True):
+                                try:
+                                    async with page.expect_file_chooser(timeout=fc_timeout) as fc_info:
+                                        await locator.scroll_into_view_if_needed(timeout=click_timeout)
+                                        await locator.click(timeout=click_timeout, force=force)
+                                    chooser = await fc_info.value
+                                    await chooser.set_files(normalized_paths)
+                                    upload_method = "fileChooser" if not force else "fileChooser_force"
+                                    break
+                                except Exception as exc:  # noqa: BLE001
+                                    last_fc_exc = exc
+                            else:
+                                if last_fc_exc is not None:
+                                    raise last_fc_exc
+                                raise BrowserSessionError("upload: file chooser path failed")
+                return InteractionResult(
+                    tool="upload",
+                    tabId=tab_id,
+                    framePath=frame_path,
+                    target=target,
+                    details={**base_details, "uploadMethod": upload_method},
+                )
+
+            variants = _upload_playwright_selector_candidates(target)
+            last_exc: Exception | None = None
+            for use in variants:
+                try:
+                    return await _try_upload_with_resolved_locator(use)
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+            if last_exc is not None:
+                raise last_exc
+            raise BrowserSessionError("upload: no selector candidates")
 
         return await self._run_tool(
             "upload",
@@ -1149,6 +1381,45 @@ class ToolRuntime:
         frame, frame_path = self._current_frame(tab_id, page)
         locator = frame.locator(target)
         return (locator.first if first else locator), frame_path
+
+    async def _locator_associated_file_input(self, start: Locator) -> Locator | None:
+        """Find ``input[type=file]`` under ``start``, adjacent siblings, or any ancestor subtree."""
+        for rel in (
+            'xpath=preceding-sibling::input[@type="file"][1]',
+            'xpath=following-sibling::input[@type="file"][1]',
+        ):
+            try:
+                sib = start.locator(rel)
+                if await sib.count() > 0:
+                    return sib.first
+            except Exception:  # noqa: BLE001
+                continue
+        node: Locator = start
+        for _ in range(14):
+            bucket = node.locator('input[type="file"],input[type=file]')
+            if await bucket.count() > 0:
+                return bucket.first
+            parent = node.locator("xpath=..").first
+            if await parent.count() == 0:
+                break
+            node = parent
+        return None
+
+    async def probe_selector(
+        self,
+        *,
+        tab_id: str,
+        selector: str,
+        state: Literal["attached", "detached", "visible", "hidden"] = "visible",
+        timeout_ms: float = 2500,
+    ) -> tuple[bool, str | None]:
+        """Resolve one selector and wait for ``state`` without emitting tool_call audit events."""
+        try:
+            locator, _ = await self._resolve_target_locator(tab_id, selector)
+            await locator.wait_for(state=state, timeout=timeout_ms)
+            return True, None
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
 
     async def _run_tool(
         self,

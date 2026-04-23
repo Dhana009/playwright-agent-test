@@ -20,6 +20,7 @@ from agent.policy.restrictions import RestrictionViolation, RestrictionsPolicy
 from agent.execution.events import EventType, RunResumedEvent
 from agent.stepgraph.models import StepGraph
 from agent.storage.files import get_run_layout
+from agent.ui.replay_interactive import _propagate_upload_page_hints
 from agent.storage.repos.checkpoints import CheckpointRepository
 from agent.storage.repos.events import EventRepository
 from agent.storage.repos.step_graph import StepGraphRepository
@@ -48,7 +49,7 @@ def _load_optional_env_test() -> None:
 def _derive_initial_url_for_blank_page(graph: StepGraph) -> str | None:
     """
     `agent run` opens about:blank. Recordings often start with clicks whose
-    `metadata.frameUrl` is the real page, without an explicit navigate step.
+    `metadata.frameUrl` / ``pageUrl`` is the real page, without an explicit navigate step.
     """
     if not graph.steps:
         return None
@@ -56,7 +57,7 @@ def _derive_initial_url_for_blank_page(graph: StepGraph) -> str | None:
         return None
     for step in graph.steps:
         meta = step.metadata
-        for key in ("frameUrl", "url"):
+        for key in ("frameUrl", "frame_url", "pageUrl", "page_url", "url"):
             val = meta.get(key)
             if isinstance(val, str) and val.strip().startswith(("http://", "https://")):
                 return val.strip()
@@ -70,6 +71,7 @@ async def _run_graph(
     auto_approve_hard: bool = False,
 ) -> None:
     _load_optional_env_test()
+    graph = _propagate_upload_page_hints(graph)
     run_id = graph.run_id
     pause_marker = _pause_marker_path(run_id)
     pause_marker.unlink(missing_ok=True)

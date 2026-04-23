@@ -1,0 +1,1582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Playwright Agent — Recorder control</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
+    body { max-width: 52rem; margin: 1.5rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; }
+    h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+    section { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    label { display: block; font-size: 0.75rem; color: #94a3b8; margin-top: 0.5rem; }
+    input, select, button, textarea { font: inherit; border-radius: 6px; border: 1px solid #475569; padding: 0.4rem 0.6rem; background: #0f172a; color: #e2e8f0; }
+    input[type="url"], input[type="text"], input[type="number"], textarea { width: 100%; max-width: 36rem; box-sizing: border-box; }
+    textarea { min-height: 4rem; resize: vertical; }
+    button { cursor: pointer; background: #334155; margin-right: 0.35rem; margin-top: 0.35rem; }
+    button.primary { background: #2563eb; border-color: #1d4ed8; font-weight: 600; }
+    button.danger { background: #7f1d1d; border-color: #991b1b; }
+    button.ghost { background: transparent; border-color: #64748b; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin-top: 0.5rem; }
+    #log { font-size: 0.7rem; color: #94a3b8; white-space: pre-wrap; max-height: 10rem; overflow: auto; background: #020617; padding: 0.5rem; border-radius: 6px; }
+    .pill { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.7rem; background: #334155; }
+    .pill.warn { background: #854d0e; color: #fef08a; }
+    ul.steps { font-size: 0.75rem; padding-left: 0; list-style: none; max-height: 18rem; overflow: auto; }
+    ul.steps li { margin: 0.35rem 0; padding: 0.45rem 0.5rem; background: #0f172a; border-radius: 6px; border: 1px solid #334155; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; justify-content: space-between; }
+    ul.steps li .meta { flex: 1; min-width: 0; word-break: break-word; }
+    ul.steps li .actions { flex-shrink: 0; }
+    .steps-hint { font-size: 0.75rem; color: #94a3b8; margin: 0 0 0.5rem; }
+    .steps-empty { font-size: 0.8rem; color: #64748b; font-style: italic; padding: 0.5rem 0; }
+    details.advanced { margin-top: 0.75rem; border-top: 1px solid #334155; padding-top: 0.75rem; }
+    details.advanced summary { cursor: pointer; color: #94a3b8; font-size: 0.8rem; }
+    .pick-banner { display: none; padding: 0.6rem 0.75rem; background: #422006; border: 1px solid #a16207; border-radius: 6px; font-size: 0.8rem; margin-bottom: 0.75rem; }
+    .pick-banner.on { display: block; }
+    .subgrid { margin-top: 0.5rem; padding: 0.75rem; background: #020617; border-radius: 6px; border: 1px solid #334155; }
+    .subgrid h3 { font-size: 0.85rem; margin: 0 0 0.35rem; color: #cbd5e1; }
+    .iv-interactive-flow { border: 1px solid #334155; border-radius: 8px; overflow-x: auto; overflow-y: visible; margin-top: 0.5rem; background: #0f172a; }
+    .iv-interactive-flow .iv-step-ul { margin-top: 0; max-height: 18rem; border-radius: 0; border-bottom: 1px solid #334155; }
+    .iv-step-num { font-weight: 600; color: #94a3b8; min-width: 1.35rem; font-size: 0.72rem; }
+    .iv-step-stat { font-size: 0.85rem; font-weight: 600; min-width: 1.1rem; text-align: center; }
+    #ivInsertPanel { margin-top: 0; }
+    .iv-op-notice {
+      box-sizing: border-box;
+      min-height: 2.75rem;
+      padding: 0.6rem 0.85rem !important;
+      border-radius: 8px;
+      border: 1px solid #475569;
+      background: #0c1323;
+      margin-top: 0.4rem !important;
+      max-width: 100%;
+      font-size: 0.82rem !important;
+      line-height: 1.45;
+    }
+    .iv-op-notice--progress {
+      border-color: #3b82f6;
+      background: #172554;
+      box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4);
+      color: #dbeafe !important;
+    }
+    .iv-op-notice--neutral { color: #cbd5e1 !important; border-color: #64748b; background: #0f172a; }
+    .iv-op-notice--error {
+      border-color: #f87171;
+      background: #450a0a;
+      color: #fecaca !important;
+    }
+  </style>
+</head>
+<body>
+  <h1>Recorder control <span class="pill" id="statusPill">idle</span></h1>
+  <p style="font-size:0.85rem;color:#94a3b8;">Start a session, use <strong>Pick target</strong> on the app tab for waits and assertions, or use the forms below. Save when done.</p>
+
+  <section>
+    <h2>1. Start session</h2>
+    <label>Target URL</label>
+    <input type="url" id="startUrl" placeholder="https://example.com" />
+    <label>Storage state file (optional)</label>
+    <input type="text" id="storageState" placeholder="/path/to/storage_state.json" />
+    <div class="row">
+      <label><input type="checkbox" id="headless" /> Headless</label>
+      <label>
+        <input type="checkbox" id="armedStart" />
+        Start with capture armed
+        <span style="color:#64748b;font-weight:normal;">(only when you press “Open browser &amp; record”)</span>
+      </label>
+    </div>
+    <button class="primary" type="button" id="btnStart">Open browser &amp; record</button>
+    <button class="danger" type="button" id="btnStop">Save &amp; close browser</button>
+  </section>
+
+  <section>
+    <h2>2. Capture gate</h2>
+    <p id="captureGateHelp" style="font-size:0.75rem;color:#94a3b8;margin:0 0 0.5rem;">
+      To <strong>turn on</strong> recording of clicks and typing in the browser tab, click <strong>Arm capture</strong> (status pill becomes “capture on”). The checkbox in section 1 only applies the <em>next</em> time you open a session. Pick / Append still work while capture is off.
+    </p>
+    <button type="button" id="btnArm">Arm capture — record clicks &amp; typing</button>
+    <button type="button" id="btnDisarm">Disarm capture</button>
+    <label>Recorder mode (for next clicks on target page)</label>
+    <select id="modeSelect">
+      <option value="auto">auto</option>
+      <option value="assert_visible">assert_visible</option>
+      <option value="assert_text">assert_text</option>
+    </select>
+    <button type="button" id="btnApplyMode">Apply mode</button>
+  </section>
+
+  <section>
+    <h2>3. Pick target (in app window)</h2>
+    <p style="font-size:0.75rem;color:#94a3b8;margin:0;">On the <strong>recorded</strong> tab: blue outline follows the pointer, bottom bar shows a preview, click commits (green flash). <strong>Pick target for upload</strong> first opens a <strong>file path</strong> prompt in this tab, then you click the upload control on the app (or set paths via session / <code>AGENT_RECORD_UPLOAD_PATH</code>). Press <kbd style="background:#334155;padding:1px 4px;border-radius:3px;">Esc</kbd> on the page or <strong>Cancel pick</strong> here to abort (clears a path you set but did not use).</p>
+    <div class="pick-banner" id="pickBanner">
+      Waiting for click: <span id="pickBannerText"></span>
+      <button type="button" class="ghost" id="btnCancelPick" style="margin-left:0.5rem;">Cancel pick</button>
+    </div>
+    <label>Element state (wait_for)</label>
+    <select id="pickWaitState">
+      <option value="visible">visible</option>
+      <option value="attached">attached</option>
+      <option value="hidden">hidden</option>
+    </select>
+    <label>Timeout (ms) for pick</label>
+    <input type="number" id="pickTimeout" value="30000" min="1000" step="1000" />
+    <label><input type="checkbox" id="pickTextContains" checked /> assert_text: substring match (contains)</label>
+    <div class="row">
+      <button class="primary" type="button" id="btnPickWait">Pick target for wait_for</button>
+      <button class="primary" type="button" id="btnPickVisible">Pick target for assert_visible</button>
+      <button class="primary" type="button" id="btnPickText">Pick target for assert_text</button>
+      <button class="primary" type="button" id="btnPickUpload">Pick target for upload</button>
+    </div>
+
+    <details class="advanced">
+      <summary>Advanced — manual selector &amp; URL assert</summary>
+      <label>wait_for — Playwright selector</label>
+      <input type="text" id="waitSelector" placeholder='[data-testid="dashboard"]' />
+      <label>State</label>
+      <select id="waitState">
+        <option value="visible">visible</option>
+        <option value="attached">attached</option>
+        <option value="hidden">hidden</option>
+      </select>
+      <label>Timeout (ms)</label>
+      <input type="number" id="waitTimeout" value="30000" min="1000" step="1000" />
+      <button type="button" id="btnAddWait">Append wait_for (manual)</button>
+      <label style="margin-top:0.75rem;">assert_url — substring URL must contain</label>
+      <input type="text" id="urlExpected" placeholder="/dashboard" />
+      <label><input type="checkbox" id="urlContains" checked /> Contains (not exact)</label>
+      <button type="button" id="btnAddUrl">Append assert_url step</button>
+      <button type="button" id="btnDelLast">Delete last step</button>
+    </details>
+  </section>
+
+  <section>
+    <h2>4. More actions</h2>
+    <div class="subgrid">
+      <h3>Navigation</h3>
+      <label>navigate — URL</label>
+      <input type="url" id="navUrl" placeholder="https://…" />
+      <label>Timeout (ms)</label>
+      <input type="number" id="navTimeout" value="30000" min="1000" step="1000" />
+      <button type="button" id="btnNavigate">Append navigate</button>
+    </div>
+    <div class="subgrid">
+      <h3>Assertions</h3>
+      <label>assert_title — expected substring</label>
+      <input type="text" id="titleExpected" placeholder="My App" />
+      <label><input type="checkbox" id="titleContains" checked /> Contains</label>
+      <button type="button" id="btnAssertTitle">Append assert_title</button>
+    </div>
+    <div class="subgrid">
+      <h3>Timing</h3>
+      <label>wait_timeout — milliseconds</label>
+      <input type="number" id="sleepMs" value="1000" min="1" step="100" />
+      <button type="button" id="btnWaitTimeout">Append wait_timeout</button>
+    </div>
+    <div class="subgrid">
+      <h3>Frames</h3>
+      <label>frame_enter — iframe selector</label>
+      <input type="text" id="frameSelector" placeholder="iframe[name=&quot;foo&quot;]" />
+      <label>Timeout (ms)</label>
+      <input type="number" id="frameTimeout" value="30000" min="1000" step="1000" />
+      <button type="button" id="btnFrameEnter">Append frame_enter</button>
+      <button type="button" id="btnFrameExit">Append frame_exit</button>
+    </div>
+    <div class="subgrid">
+      <h3>Upload</h3>
+      <p class="steps-hint" style="margin:0 0 0.35rem 0;">
+        <strong>Pick upload control</strong> (§3 or here) uses path(s) already in the field below when present; otherwise a prompt asks for them, then you click the control on the app. Or type selector + paths and use <strong>Append upload</strong> without picking.
+      </p>
+      <div class="row" style="margin-bottom:0.35rem;">
+        <button class="primary" type="button" id="btnPickUploadManual">Pick upload control (same as §3)</button>
+      </div>
+      <label>Target selector</label>
+      <input type="text" id="uploadSelector" placeholder="input[type=file] or pick from §3 / above" />
+      <label>File path(s) — one per line or single path</label>
+      <textarea id="uploadPaths" placeholder="/path/to/file.pdf"></textarea>
+      <label>Timeout (ms)</label>
+      <input type="number" id="uploadTimeout" value="30000" min="1000" step="1000" />
+      <button type="button" id="btnUpload">Append upload</button>
+    </div>
+    <div class="subgrid">
+      <h3>Dialog</h3>
+      <label><input type="checkbox" id="dialogAccept" checked /> Accept (OK)</label>
+      <label>Prompt text (optional, for prompt())</label>
+      <input type="text" id="dialogPrompt" placeholder="" />
+      <button type="button" id="btnDialog">Append dialog_handle</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Steps <span class="pill" id="stepCountPill">0</span></h2>
+    <p class="steps-hint">
+      Each row has <strong>Remove</strong> (delete that step), <strong>↑↓</strong> (reorder). In Advanced, <strong>Delete last step</strong> removes only the final step. Nothing appears until you add steps (pick, append, or armed capture on the app).
+    </p>
+    <p class="steps-empty" id="stepsEmpty" style="display:none;">No steps in this session yet.</p>
+    <ul class="steps" id="stepList"></ul>
+    <p id="paths" style="font-size:0.75rem;color:#64748b;margin-top:0.5rem;"></p>
+  </section>
+
+  <section>
+    <h2>5. After Save &amp; close browser</h2>
+    <div class="steps-hint" style="margin:0;">
+      <p style="margin:0 0 0.5rem;"><strong>What happens:</strong> Chromium closes. Everything is saved under <code style="font-size:0.7rem;">agent/runs/&lt;run_id&gt;/</code> (see Log paths). <strong>Replay, duplicate, and inspect saved runs</strong> use section 6 — no terminal required.</p>
+      <p style="margin:0;"><strong>Live session vs saved file:</strong> Sections 1–4 edit only the <em>current</em> browser session. To change a graph after save, use <strong>Duplicate as new run</strong> then edit the fork (or edit <code style="font-size:0.7rem;">stepgraph.json</code> in your editor).</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>6. Saved runs (replay &amp; copy)</h2>
+    <p class="steps-hint" style="margin-top:0;">
+      Runs live under <code style="font-size:0.7rem;">agent/runs/</code>. <strong>Pick a saved run</strong> — its steps load below immediately (no browser, no execution). Then use <strong>Open interactive replay</strong> for step-by-step control in one Chromium tab. If a step fails, that tab <strong>stays open</strong> so you can fix the app or edit the graph and run again. Stop any live <strong>recording</strong> in section 1 before opening interactive.
+    </p>
+    <div class="row" style="align-items:center;">
+      <label style="margin:0;">Saved run</label>
+      <select id="savedRunSelect" style="min-width:16rem;max-width:100%;"></select>
+      <button type="button" id="btnRefreshRuns">Refresh list</button>
+    </div>
+    <p id="savedRunPreviewMeta" class="steps-hint" style="margin-top:0.5rem;"></p>
+    <ul class="steps" id="savedRunStepPreview" style="margin-top:0.25rem;max-height:16rem;"></ul>
+    <div class="row" style="margin-top:0.5rem;">
+      <label style="margin:0;">New id for copy (optional)</label>
+      <input type="text" id="forkRunId" placeholder="run_… (auto if empty)" style="max-width:14rem;" />
+      <button type="button" id="btnDuplicateRun">Duplicate as new run</button>
+    </div>
+
+    <h3 style="font-size:0.95rem;margin:1.1rem 0 0.35rem;color:#cbd5e1;">Interactive replay (step control — default)</h3>
+    <p class="steps-hint" style="margin-top:0;">
+      Opens one browser for this session. Steps are <strong>numbered</strong> in the list below; <strong>Run</strong> marks ✓ or ✗. Use <strong>＋</strong> on a row to splice a new step (form opens in the same block). <strong>Force fix</strong> is <strong>deterministic</strong>: it probes the <strong>interactive</strong> tab for your existing selectors (visible or attached, same as running the step). If none match you get a clear &quot;not on this page&quot; message. If one matches, it reorders primary/fallback locator text. For <strong>upload</strong> steps only, when <code style="font-size:0.7rem;">[data-testid=&quot;upload-area&quot;]</code> is attached on that tab, it may also append canonical upload fallbacks before reordering. It does <strong>not</strong> call an LLM, invent selectors from error text, or log in / navigate for you. <strong>Save graph to disk</strong> persists <code style="font-size:0.7rem;">stepgraph.json</code>. A failed step does <strong>not</strong> close the browser.
+    </p>
+    <p id="ivSuggestFixNote" class="steps-hint" style="margin-top:0.35rem;font-size:0.72rem;color:#94a3b8;">
+      <strong>Suggest fix (LLM)</strong> would be a separate, explicit control (cost, latency, safety policy) — it is <strong>not</strong> implemented in this build. Do not expect semantic repair from <strong>Force fix</strong>; use site-side test ids / unique file inputs (see <code style="font-size:0.65rem;">PORTING_NOTES.md</code> upload contract) plus Pick or manual graph edits when needed.
+    </p>
+    <div class="row" style="flex-wrap:wrap;align-items:center;gap:0.35rem;">
+      <button type="button" class="primary" id="btnInteractiveStart">Open interactive replay (selected run)</button>
+      <button type="button" id="btnInteractiveStop">Stop interactive</button>
+      <button type="button" id="btnInteractiveSave">Save graph to disk</button>
+      <button
+        type="button"
+        id="btnIvSuggestFix"
+        disabled
+        title="Not implemented. Future ‘Suggest fix’ would call an LLM or heal pipeline under explicit policy. Force fix is probe + reorder (+ optional upload fallbacks) only."
+      >
+        Suggest fix (LLM) — not wired
+      </button>
+    </div>
+    <p id="interactiveHint" class="steps-hint" style="margin-top:0.5rem;"></p>
+    <p
+      id="ivOperationNotice"
+      class="steps-hint iv-op-notice"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      tabindex="-1"
+      style="display:none;margin-top:0.35rem;white-space:pre-wrap;max-width:52rem;outline:none;"
+    ></p>
+    <div class="row" style="align-items:center;">
+      <label style="margin:0;">Run range</label>
+      <select id="ivFrom" style="min-width:10rem;"></select>
+      <span style="color:#94a3b8;">→</span>
+      <select id="ivTo" style="min-width:10rem;"></select>
+      <button type="button" class="primary" id="btnIvRange">Run range</button>
+    </div>
+    <p class="steps-hint" style="margin:0.45rem 0 0.2rem;font-size:0.72rem;color:#94a3b8;">
+      <strong>Interactive step list</strong> (below) is where <strong>Run</strong>, <strong>Force fix</strong>, and <strong>＋</strong> appear after you open interactive replay.
+      The list under <strong>Saved run</strong> farther above is only a <em>disk preview</em> — it never shows those buttons.
+    </p>
+    <div class="iv-interactive-flow">
+      <ul class="steps iv-step-ul" id="ivStepList"></ul>
+      <div id="ivInsertPanel" style="display:none;padding:0.65rem 0.75rem;background:#020617;">
+        <p id="ivInsertContextLabel" class="steps-hint" style="margin:0 0 0.5rem;"></p>
+        <div class="row iv-insert-pick-row" style="margin-bottom:0.5rem;flex-wrap:wrap;align-items:center;gap:0.35rem;">
+          <button type="button" class="ghost" id="btnIvInsertClose">Close</button>
+          <button type="button" class="primary" id="btnIvPickSel">Pick selector</button>
+          <button type="button" id="btnIvPickWait">Pick wait target</button>
+          <button type="button" id="btnIvPickText">Pick assert_text</button>
+          <button type="button" class="primary" id="btnIvPickUpload">Pick upload control</button>
+          <button type="button" class="ghost" id="btnIvPickCancel">Cancel pick</button>
+        </div>
+        <p class="steps-hint" style="margin:0 0 0.5rem;">
+          <strong>Pick:</strong> switches to the interactive browser tab — hover highlights, click commits (same as recording). The selector field is filled automatically. For <strong>upload</strong>, enter absolute file path(s) in the field below <em>first</em> (or you will be prompted), then <strong>Pick upload control</strong> and click the drop zone or button on the app — the runner resolves <code>input[type=file]</code> when needed (same path-first idea as playwright-repo-test when the file chooser opens).
+        </p>
+        <label>Step kind</label>
+        <select id="ivInsKind">
+          <option value="navigate">navigate</option>
+          <option value="wait_for">wait_for</option>
+          <option value="assert_visible">assert_visible</option>
+          <option value="assert_text">assert_text</option>
+          <option value="assert_url">assert_url</option>
+          <option value="assert_title">assert_title</option>
+          <option value="wait_timeout">wait_timeout</option>
+          <option value="frame_enter">frame_enter</option>
+          <option value="frame_exit">frame_exit</option>
+          <option value="upload">upload</option>
+          <option value="dialog_handle">dialog_handle</option>
+          <option value="click">click</option>
+          <option value="fill">fill</option>
+          <option value="type">type</option>
+          <option value="press">press</option>
+        </select>
+        <div class="subgrid" style="margin-top:0.5rem;">
+          <div data-iv-for="navigate" style="display:none;">
+            <label>URL</label>
+            <input type="url" id="ivInsNavUrl" placeholder="https://…" />
+            <label>Timeout (ms)</label>
+            <input type="number" id="ivInsNavTimeout" value="30000" min="1000" step="1000" />
+          </div>
+          <div data-iv-for="wait_for assert_visible assert_text click fill type press frame_enter upload" style="display:none;">
+            <label>Playwright selector</label>
+            <textarea id="ivInsSelector" rows="3" wrap="off" spellcheck="false" placeholder='[data-testid="…"]' style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px;resize:vertical;box-sizing:border-box;"></textarea>
+            <label>Timeout (ms)</label>
+            <input type="number" id="ivInsTimeout" value="30000" min="1000" step="1000" />
+          </div>
+          <div data-iv-for="wait_for" style="display:none;">
+            <label>State</label>
+            <select id="ivInsWaitState">
+              <option value="visible">visible</option>
+              <option value="attached">attached</option>
+              <option value="hidden">hidden</option>
+            </select>
+          </div>
+          <div data-iv-for="assert_text" style="display:none;">
+            <label>Expected text</label>
+            <input type="text" id="ivInsExpected" placeholder="substring or full text" />
+            <label><input type="checkbox" id="ivInsContains" checked /> Contains match</label>
+          </div>
+          <div data-iv-for="assert_url" style="display:none;">
+            <label>URL must contain</label>
+            <input type="text" id="ivInsUrlExpected" placeholder="/dashboard" />
+            <label><input type="checkbox" id="ivInsUrlContains" checked /> Contains (not exact)</label>
+          </div>
+          <div data-iv-for="assert_title" style="display:none;">
+            <label>Title substring</label>
+            <input type="text" id="ivInsTitleExpected" placeholder="My App" />
+            <label><input type="checkbox" id="ivInsTitleContains" checked /> Contains</label>
+          </div>
+          <div data-iv-for="wait_timeout" style="display:none;">
+            <label>Sleep (ms)</label>
+            <input type="number" id="ivInsSleepMs" value="1000" min="1" step="100" />
+          </div>
+          <div data-iv-for="upload" style="display:none;">
+            <p class="steps-hint" style="margin:0 0 0.4rem 0;font-size:11px;color:#94a3b8;line-height:1.35;">
+              Put absolute file path(s) here first (one per line or comma-separated), then <strong>Pick upload control</strong> and click the upload area in the browser — the selector fills automatically. If the field is empty, you get a path prompt before pick. Use real spaces in paths; avoid <code>%20</code> unless that is literally in the filename on disk.
+            </p>
+            <label>File path(s) — one per line</label>
+            <textarea id="ivInsUploadPaths" placeholder="/path/to/file.pdf"></textarea>
+          </div>
+          <div data-iv-for="dialog_handle" style="display:none;">
+            <p class="steps-hint" style="margin:0 0 0.35rem 0;font-size:11px;color:#94a3b8;line-height:1.35;">
+              Choose how the runner responds to the next <code>alert</code> / <code>confirm</code> / <code>prompt</code>. Same idea as <strong>Dialog</strong> in section 2 above — explicit <strong>No</strong> is dismiss / Cancel.
+            </p>
+            <div class="row" style="flex-wrap:wrap;gap:0.5rem 1rem;margin-bottom:0.35rem;">
+              <label><input type="radio" name="ivInsDlgChoice" value="accept" checked /> Accept (OK)</label>
+              <label><input type="radio" name="ivInsDlgChoice" value="dismiss" /> Dismiss / Cancel (No)</label>
+            </div>
+            <label>Prompt text (optional)</label>
+            <input type="text" id="ivInsDlgPrompt" placeholder="" />
+            <label>Timeout (ms)</label>
+            <input type="number" id="ivInsDlgTimeout" value="15000" min="1000" step="1000" />
+          </div>
+          <div data-iv-for="fill type" style="display:none;">
+            <label>Text</label>
+            <input type="text" id="ivInsText" placeholder="value to type or fill" />
+          </div>
+          <div data-iv-for="type" style="display:none;">
+            <label>Delay between keys (ms)</label>
+            <input type="number" id="ivInsDelay" value="0" min="0" step="5" />
+          </div>
+          <div data-iv-for="press" style="display:none;">
+            <label>Key</label>
+            <input type="text" id="ivInsKey" value="Enter" placeholder="Enter" />
+          </div>
+        </div>
+        <button type="button" class="primary" id="btnIvInsert">Insert step</button>
+      </div>
+    </div>
+
+    <details class="advanced" style="margin-top:1rem;">
+      <summary>Optional — full graph replay (subprocess, unattended)</summary>
+      <p class="steps-hint" style="margin-top:0.5rem;">
+        Runs the entire <code style="font-size:0.7rem;">stepgraph.json</code> in a <strong>separate</strong> process (like CI). Hard-risk steps use <code style="font-size:0.7rem;">--auto-approve-hard</code>. Log: <code style="font-size:0.7rem;">ui_replay.log</code> in the run folder. Prefer interactive replay above when you are debugging.
+      </p>
+      <div class="row">
+        <button type="button" id="btnReplayRun">Run full graph (subprocess)</button>
+        <button type="button" id="btnReplayStop">Stop subprocess replay</button>
+      </div>
+      <p id="replayStatusLine" class="steps-hint" style="margin-top:0.75rem;"></p>
+      <pre id="replayLogOut" style="display:none;max-height:14rem;overflow:auto;background:#020617;padding:0.5rem;border-radius:6px;font-size:0.68rem;border:1px solid #334155;"></pre>
+    </details>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <div id="log"></div>
+  </section>
+
+  <script>
+    const logEl = document.getElementById('log');
+    function log(msg) {
+      logEl.textContent = (new Date().toISOString().slice(11, 19) + ' ' + msg + '\n') + logEl.textContent;
+    }
+    /** Background pollers log at most once per interval so a stopped server does not flood the log. */
+    let lastBackgroundPollErrorLog = 0;
+    function logBackgroundPollError(tag, err) {
+      const now = Date.now();
+      if (now - lastBackgroundPollErrorLog < 25000) return;
+      lastBackgroundPollErrorLog = now;
+      log(tag + ': ' + (err && err.message ? err.message : String(err)));
+    }
+    async function api(method, path, body, signal) {
+      let r;
+      try {
+        r = await fetch(path, {
+          method,
+          headers: body ? { 'Content-Type': 'application/json' } : {},
+          body: body ? JSON.stringify(body) : undefined,
+          signal: signal || undefined,
+        });
+      } catch (e) {
+        const isFile = typeof location !== 'undefined' && location.protocol === 'file:';
+        const tip = isFile
+          ? 'You opened this HTML as a file. Run the UI server (eg uv run python -m agent.cli ui) and use the http://… URL it prints.'
+          : 'No response from this origin. Start or restart the dashboard (eg uv run python -m agent.cli ui) and reload this tab.';
+        const base = e && e.message ? e.message : 'Failed to fetch';
+        throw new Error(base + ' — ' + tip);
+      }
+      const t = await r.text();
+      let j = null;
+      try { j = t ? JSON.parse(t) : null; } catch (_) {}
+      if (!r.ok) throw new Error((j && j.error) || t || r.status);
+      return j;
+    }
+    function pickPayload(kind) {
+      return {
+        action: 'begin_pick',
+        kind,
+        state: document.getElementById('pickWaitState').value,
+        timeoutMs: parseInt(document.getElementById('pickTimeout').value, 10) || 30000,
+        contains: document.getElementById('pickTextContains').checked,
+      };
+    }
+    function parseUploadPaths(raw) {
+      const t = String(raw || '').trim();
+      if (!t) return [];
+      const lines = t.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      if (lines.length > 1) return lines;
+      const one = lines[0] || '';
+      if (!one) return [];
+      if (/[,，]/.test(one)) return one.split(/[,，]+/).map((s) => s.trim()).filter(Boolean);
+      return [one];
+    }
+    async function loadSavedRunPreviewSteps() {
+      const ul = document.getElementById('savedRunStepPreview');
+      const meta = document.getElementById('savedRunPreviewMeta');
+      const sel = document.getElementById('savedRunSelect');
+      if (!ul || !meta || !sel) return;
+      const rid = sel.value.trim();
+      if (!rid) {
+        ul.innerHTML = '';
+        meta.textContent = '';
+        return;
+      }
+      try {
+        const j = await api('GET', '/api/runs/steps?runId=' + encodeURIComponent(rid));
+        const n = j.stepCount != null ? j.stepCount : (j.steps || []).length;
+        const gid = j.graphRunId || '';
+        const folderId = j.runId || rid;
+        const idPart =
+          gid && gid !== folderId ? 'folder ' + folderId + ' · graph runId ' + gid : 'run ' + folderId;
+        meta.textContent =
+          n +
+          ' step(s) loaded from disk · ' +
+          idPart +
+          ' — list above is disk preview only (no Run / Force fix). Click “Open interactive replay” below to open Chromium and run steps.';
+        ul.innerHTML = '';
+        (j.steps || []).forEach((st) => {
+          const li = document.createElement('li');
+          li.style.justifyContent = 'flex-start';
+          const span = document.createElement('span');
+          span.className = 'meta';
+          const s = (st.primarySelector || '').slice(0, 100);
+          const det = (st.detail || '').slice(0, 100);
+          const line = [st.action, s || det || st.stepId].filter(Boolean).join(' — ');
+          span.textContent = det && s ? st.action + ' — ' + s + ' · ' + det : line;
+          const fp = st.filePathsPreview ? String(st.filePathsPreview) : '';
+          if (fp) span.textContent += ' — files: ' + fp.slice(0, 80) + (fp.length > 80 ? '…' : '');
+          li.appendChild(span);
+          ul.appendChild(li);
+        });
+      } catch (e) {
+        ul.innerHTML = '';
+        meta.textContent = 'Could not load steps: ' + (e && e.message ? e.message : String(e));
+      }
+    }
+    let ivInsertAfterStepId = '__append__';
+    const ivStepRunStatus = Object.create(null);
+    /** Step id awaiting run_step HTTP response (server may already show runActivity). */
+    let ivClientRunStep = null;
+    let ivRangeBusy = false;
+    let ivForceFixStep = null;
+    /** True while POST /api/interactive/start is in flight (server has not assigned _interactive yet, so state stays inactive). */
+    /** True only while POST /api/interactive/start is in flight (prevents double-open). */
+    let ivOpenBusy = false;
+    function clearIvOperationNotice() {
+      const el = document.getElementById('ivOperationNotice');
+      if (!el) return;
+      el.style.display = 'none';
+      el.textContent = '';
+      el.className = 'steps-hint iv-op-notice';
+    }
+    /** Lets the browser paint button/notice updates before a long await (fetch). */
+    function ivFlushPaint() {
+      return new Promise(function (resolve) {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(resolve);
+        });
+      });
+    }
+    /** tone: neutral (result), error, progress (in-flight) */
+    function showIvOperationNotice(summary, detail, tone) {
+      const el = document.getElementById('ivOperationNotice');
+      if (!el) return;
+      const t = tone || 'neutral';
+      const toneClass = t === 'progress' ? 'iv-op-notice--progress' : t === 'error' ? 'iv-op-notice--error' : 'iv-op-notice--neutral';
+      const s = (summary || '').trim();
+      const d = (detail || '').trim();
+      const body = s + (d ? (s ? '\n\n' : '') + d : '');
+      if (!body) {
+        clearIvOperationNotice();
+        return;
+      }
+      el.className = 'steps-hint iv-op-notice ' + toneClass;
+      el.style.display = 'block';
+      el.textContent = body;
+      try {
+        el.focus({ preventScroll: true });
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch (_) {}
+    }
+    function pruneIvStepRunStatus(stepIds) {
+      const keep = new Set(stepIds);
+      Object.keys(ivStepRunStatus).forEach((k) => {
+        if (!keep.has(k)) delete ivStepRunStatus[k];
+      });
+    }
+    function openIvInsert(afterId, contextText) {
+      ivInsertAfterStepId = afterId;
+      const panel = document.getElementById('ivInsertPanel');
+      const label = document.getElementById('ivInsertContextLabel');
+      if (!panel || !label) return;
+      label.textContent =
+        contextText ||
+        (afterId === '__prepend__' ? 'Insert before step 1.' : 'Insert after the chosen step.');
+      panel.style.display = 'block';
+      syncIvInsertRows();
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    function syncIvInsertRows() {
+      const kindEl = document.getElementById('ivInsKind');
+      if (!kindEl) return;
+      const k = kindEl.value;
+      document.querySelectorAll('#ivInsertPanel [data-iv-for]').forEach((el) => {
+        const kinds = (el.getAttribute('data-iv-for') || '').trim().split(/\s+/).filter(Boolean);
+        el.style.display = kinds.includes(k) ? 'block' : 'none';
+      });
+    }
+    function buildIvInsertPayload() {
+      const anchor = ivInsertAfterStepId || '__append__';
+      const afterStepId =
+        anchor === '__append__' ? '__append__' : anchor === '__prepend__' ? '__prepend__' : anchor;
+      const kind = document.getElementById('ivInsKind').value;
+      const timeoutMs = parseInt(document.getElementById('ivInsTimeout').value, 10) || 30000;
+      const sel = document.getElementById('ivInsSelector').value.trim();
+      const p = { afterStepId, kind };
+      switch (kind) {
+        case 'navigate':
+          p.url = document.getElementById('ivInsNavUrl').value.trim();
+          p.timeoutMs = parseInt(document.getElementById('ivInsNavTimeout').value, 10) || 30000;
+          break;
+        case 'wait_for':
+          p.selector = sel;
+          p.state = document.getElementById('ivInsWaitState').value;
+          p.timeoutMs = timeoutMs;
+          break;
+        case 'assert_visible':
+        case 'click':
+        case 'frame_enter':
+          p.selector = sel;
+          p.timeoutMs = timeoutMs;
+          break;
+        case 'assert_text':
+          p.selector = sel;
+          p.expected = document.getElementById('ivInsExpected').value.trim();
+          p.contains = document.getElementById('ivInsContains').checked;
+          p.timeoutMs = timeoutMs;
+          break;
+        case 'assert_url':
+          p.expected = document.getElementById('ivInsUrlExpected').value.trim();
+          p.contains = document.getElementById('ivInsUrlContains').checked;
+          break;
+        case 'assert_title':
+          p.expected = document.getElementById('ivInsTitleExpected').value.trim();
+          p.contains = document.getElementById('ivInsTitleContains').checked;
+          break;
+        case 'wait_timeout':
+          p.timeoutMs = parseInt(document.getElementById('ivInsSleepMs').value, 10) || 1000;
+          break;
+        case 'frame_exit':
+          break;
+        case 'upload':
+          p.selector = sel;
+          p.filePaths = parseUploadPaths(document.getElementById('ivInsUploadPaths').value);
+          p.timeoutMs = timeoutMs;
+          break;
+        case 'dialog_handle': {
+          const dlgChoice = document.querySelector('input[name="ivInsDlgChoice"]:checked');
+          p.accept = !dlgChoice || dlgChoice.value !== 'dismiss';
+          const pt = document.getElementById('ivInsDlgPrompt').value.trim();
+          if (pt) p.promptText = pt;
+          p.timeoutMs = parseInt(document.getElementById('ivInsDlgTimeout').value, 10) || 15000;
+          break;
+        }
+        case 'fill':
+        case 'type':
+          p.selector = sel;
+          p.text = document.getElementById('ivInsText').value;
+          p.timeoutMs = timeoutMs;
+          if (kind === 'type') p.delayMs = parseFloat(document.getElementById('ivInsDelay').value) || 0;
+          break;
+        case 'press':
+          p.selector = sel;
+          p.key = document.getElementById('ivInsKey').value.trim() || 'Enter';
+          p.timeoutMs = timeoutMs;
+          break;
+        default:
+          break;
+      }
+      return p;
+    }
+    function ivPlaceholderRow(text) {
+      const li = document.createElement('li');
+      li.className = 'steps-empty';
+      li.style.cssText = 'padding:0.65rem 0.75rem;border-style:dashed;';
+      li.textContent = text;
+      return li;
+    }
+    /** Disabled placeholder so Run range <select>s are not empty (matches “— select a saved run —” pattern). */
+    function ivFillRangeSelectsPlaceholder(frm, to, label) {
+      if (!frm || !to) return;
+      frm.innerHTML = '';
+      to.innerHTML = '';
+      const opt = () => {
+        const o = document.createElement('option');
+        o.value = '';
+        o.textContent = label;
+        o.disabled = true;
+        return o;
+      };
+      frm.appendChild(opt());
+      to.appendChild(opt());
+    }
+    /** @returns {Promise<boolean>} true if interactive session is active (step list refreshed when non-empty). */
+    async function pollInteractiveOnce() {
+      const hint = document.getElementById('interactiveHint');
+      const ul = document.getElementById('ivStepList');
+      const frm = document.getElementById('ivFrom');
+      const to = document.getElementById('ivTo');
+      const insPanel = document.getElementById('ivInsertPanel');
+      if (!hint || !ul || !frm || !to) return false;
+      try {
+        const ivs = await api('GET', '/api/interactive/state');
+        const btnIvRangeCtl = document.getElementById('btnIvRange');
+        const serverStarting = !!(ivs && ivs.starting);
+        if (!ivs.active) {
+          if (btnIvRangeCtl) btnIvRangeCtl.disabled = true;
+          if (ivOpenBusy || serverStarting) {
+            hint.textContent =
+              'Starting interactive replay… The server is launching Chromium and loading the graph (first open is often 10–45s; initial URL uses domcontentloaded, up to 60s). Background refresh keeps working — do not click Open again.';
+            ivFillRangeSelectsPlaceholder(frm, to, '— starting interactive… —');
+            return false;
+          }
+          hint.textContent = '';
+          clearIvOperationNotice();
+          ul.innerHTML = '';
+          ul.appendChild(
+            ivPlaceholderRow(
+              'Interactive replay is off. Choose a saved run above, then click “Open interactive replay” — numbered steps with Run / Force fix appear here.'
+            )
+          );
+          ivFillRangeSelectsPlaceholder(frm, to, '— interactive off —');
+          if (insPanel) insPanel.style.display = 'none';
+          Object.keys(ivStepRunStatus).forEach((k) => delete ivStepRunStatus[k]);
+          ivClientRunStep = null;
+          ivRangeBusy = false;
+          ivForceFixStep = null;
+          return false;
+        }
+        const ra = ivs.runActivity;
+        const raLabel = ra && ra.label ? String(ra.label) : '';
+        const serverRunBusy = !!(ra && ra.phase);
+        const anyRunBusy =
+          serverRunBusy || ivClientRunStep != null || ivRangeBusy || ivForceFixStep != null;
+        hint.textContent =
+          'Interactive on · folder ' +
+          (ivs.folderRunId || '') +
+          ' · graph runId ' +
+          (ivs.runId || '') +
+          (ivs.lastError ? ' · Last error: ' + ivs.lastError : '') +
+          (raLabel
+            ? ' · ' + raLabel
+            : ivClientRunStep
+              ? ' · Starting step…'
+              : ivRangeBusy
+                ? ' · Running range…'
+                : ivForceFixStep
+                  ? ' · Force fix in progress…'
+                  : '');
+        const steps = ivs.steps || [];
+        if (steps.length === 0) {
+          hint.textContent =
+            'Interactive on · folder ' +
+            (ivs.folderRunId || '') +
+            ' · graph runId ' +
+            (ivs.runId || '') +
+            ' · This graph has no steps in memory (unexpected). Try Save graph or reopen the run.';
+          ul.innerHTML = '';
+          ul.appendChild(ivPlaceholderRow('No steps in this interactive graph. Re-open the run or pick a different saved run.'));
+          ivFillRangeSelectsPlaceholder(frm, to, '— no steps —');
+          if (btnIvRangeCtl) btnIvRangeCtl.disabled = true;
+          return true;
+        }
+        pruneIvStepRunStatus(steps.map((x) => x.stepId));
+        const fillSel = (sel) => {
+          const cur = sel.value;
+          sel.innerHTML = '';
+          steps.forEach((x) => {
+            const o = document.createElement('option');
+            o.value = x.stepId;
+            o.textContent = (x.action || '') + ' — ' + (x.stepId || '').slice(-8);
+            sel.appendChild(o);
+          });
+          if (cur && [...sel.options].some((o) => o.value === cur)) sel.value = cur;
+        };
+        fillSel(frm);
+        fillSel(to);
+        if (steps.length && !frm.value) frm.selectedIndex = 0;
+        if (steps.length && !to.value) to.selectedIndex = steps.length - 1;
+        syncIvInsertRows();
+        if (btnIvRangeCtl) {
+          btnIvRangeCtl.disabled = anyRunBusy;
+          btnIvRangeCtl.textContent = ivRangeBusy ? 'Running range…' : 'Run range';
+        }
+        const btnIvInsert = document.getElementById('btnIvInsert');
+        if (btnIvInsert) btnIvInsert.disabled = anyRunBusy;
+        ul.innerHTML = '';
+        steps.forEach((row, idx) => {
+          const li = document.createElement('li');
+          li.className = 'iv-step-row';
+          li.dataset.stepId = row.stepId;
+
+          const left = document.createElement('span');
+          left.style.cssText =
+            'display:flex;align-items:center;gap:0.35rem;flex-shrink:0;margin-right:0.35rem';
+          if (idx === 0) {
+            const b0 = document.createElement('button');
+            b0.type = 'button';
+            b0.className = 'ghost';
+            b0.title = 'Insert before step 1';
+            b0.textContent = '＋';
+            b0.disabled = anyRunBusy;
+            b0.onclick = () => openIvInsert('__prepend__', 'Insert before step 1.');
+            left.appendChild(b0);
+          }
+          const num = document.createElement('span');
+          num.className = 'iv-step-num';
+          num.textContent = String(idx + 1) + '.';
+          left.appendChild(num);
+          const stat = document.createElement('span');
+          stat.className = 'iv-step-stat';
+          const stv = ivStepRunStatus[row.stepId];
+          stat.textContent = stv === 'ok' ? '✓' : stv === 'fail' ? '✗' : '';
+          stat.style.color = stv === 'ok' ? '#4ade80' : stv === 'fail' ? '#f87171' : '#64748b';
+          left.appendChild(stat);
+
+          const metaWrap = document.createElement('span');
+          metaWrap.style.cssText =
+            'display:flex;flex-direction:column;gap:0.12rem;min-width:0;flex:1;align-self:center';
+          const meta = document.createElement('span');
+          meta.className = 'meta';
+          const psel = (row.primarySelector || '').slice(0, 80);
+          const det = (row.detail || '').slice(0, 80);
+          const fpv = row.filePathsPreview ? String(row.filePathsPreview) : '';
+          const line = [row.action, psel || det || row.stepId].filter(Boolean).join(' — ');
+          const bits = [det && psel ? (row.action || '') + ' — ' + psel + ' · ' + det : line];
+          if (fpv) bits.push('files: ' + fpv.slice(0, 72) + (fpv.length > 72 ? '…' : ''));
+          meta.textContent = bits.join(' — ');
+          metaWrap.appendChild(meta);
+          if (row.lastUploadError) {
+            const uerr = document.createElement('span');
+            uerr.className = 'meta';
+            uerr.style.cssText =
+              'color:#f87171;font-size:0.72rem;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:min(40rem,92vw)';
+            const uet = String(row.lastUploadError);
+            uerr.textContent = 'Last upload error: ' + uet.slice(0, 220) + (uet.length > 220 ? '…' : '');
+            uerr.title = uet;
+            metaWrap.appendChild(uerr);
+          }
+
+          const act = document.createElement('span');
+          act.className = 'actions';
+
+          const run = document.createElement('button');
+          run.type = 'button';
+          run.textContent = 'Run';
+          run.disabled = anyRunBusy;
+          if (serverRunBusy && ra && ra.stepId === row.stepId) {
+            run.textContent = ra.phase === 'retrying' ? 'Retrying…' : 'Running…';
+          } else if (ivClientRunStep === row.stepId) {
+            run.textContent = 'Starting…';
+          }
+          run.onclick = async () => {
+            if (ivClientRunStep != null || ivRangeBusy || serverRunBusy) return;
+            ivClientRunStep = row.stepId;
+            try {
+              await api('POST', '/api/interactive/run_step', { stepId: row.stepId });
+              ivStepRunStatus[row.stepId] = 'ok';
+              log('iv run ' + row.stepId);
+            } catch (e) {
+              ivStepRunStatus[row.stepId] = 'fail';
+              log('iv run: ' + (e && e.message ? e.message : String(e)));
+            } finally {
+              ivClientRunStep = null;
+              await pollInteractiveOnce();
+            }
+          };
+
+          const fixBtn = document.createElement('button');
+          fixBtn.type = 'button';
+          fixBtn.className = 'ghost';
+          fixBtn.textContent = 'Fix…';
+          fixBtn.title = 'Open add-step form after this row (waits, assertions, actions)';
+          fixBtn.style.display = ivStepRunStatus[row.stepId] === 'fail' ? 'inline-block' : 'none';
+          fixBtn.disabled = anyRunBusy;
+          const stepNo = idx + 1;
+          fixBtn.onclick = () =>
+            openIvInsert(row.stepId, 'Step ' + stepNo + ' failed — add or adjust below, then Run again.');
+
+          let ffBtn = null;
+          const rowHasLocator = row.hasLocatorTarget || (row.primarySelector && String(row.primarySelector).trim());
+          if (rowHasLocator) {
+            ffBtn = document.createElement('button');
+            ffBtn.type = 'button';
+            ffBtn.className = 'ghost';
+            ffBtn.textContent = 'Force fix';
+            ffBtn.title =
+              (row.action === 'upload'
+                ? 'Upload: probes selectors (attached). If [data-testid="upload-area"] is on the page, may append upload-area + first file input fallbacks, then reorders. '
+                : '1) Checks the interactive tab for any of this step’s selectors. 2) If one matches, reorders primary/fallback text. ') +
+              'Deterministic — not an LLM. If none match, navigate or log in first.';
+            ffBtn.dataset.ivFf = '1';
+            ffBtn.disabled = anyRunBusy || ivForceFixStep != null;
+            if (ivForceFixStep === row.stepId) ffBtn.textContent = 'Checking…';
+            ffBtn.onclick = async () => {
+              if (ivForceFixStep != null) {
+                showIvOperationNotice(
+                  'Force fix already in progress',
+                  'Wait for the current Force fix request to finish (watch the blue banner above the step list).',
+                  'progress'
+                );
+                return;
+              }
+              if (ivClientRunStep != null || ivRangeBusy || serverRunBusy) {
+                showIvOperationNotice(
+                  'Force fix blocked for now',
+                  'A step is running or a range run is in progress. Wait until Run / Run range finishes, then try Force fix again.',
+                  'error'
+                );
+                return;
+              }
+              ivForceFixStep = row.stepId;
+              ffBtn.textContent = 'Checking…';
+              ffBtn.disabled = true;
+              ffBtn.setAttribute('aria-busy', 'true');
+              const list = document.getElementById('ivStepList');
+              if (list) {
+                list.querySelectorAll('button[data-iv-ff]').forEach((b) => {
+                  b.disabled = true;
+                  if (b !== ffBtn) b.textContent = 'Force fix';
+                });
+              }
+              showIvOperationNotice(
+                'Force fix in progress…',
+                'Checking the interactive browser tab: each selector is tried until one matches (visible/attached, same as running the step). If a match is found, locator order on the step is updated. Several fallbacks can take a few seconds.',
+                'progress'
+              );
+              log('Force fix: checking tab + updating locators for step ' + (row.stepId || '').slice(-8) + '…');
+              await ivFlushPaint();
+              const t0 = Date.now();
+              try {
+                const fj = await api('POST', '/api/interactive/force_fix', { stepId: row.stepId });
+                const ms = Date.now() - t0;
+                const head = fj.changed ? 'Force fix applied (graph updated).' : 'Force fix finished (no locator change).';
+                log('iv force_fix ' + row.stepId + (fj.message ? ' — ' + fj.message : '') + ' (' + ms + ' ms)');
+                const timing = '(Server round-trip: ' + ms + ' ms.)';
+                let probeBlock = '';
+                if (fj.probe && fj.probe.matchedSelector) {
+                  probeBlock =
+                    '\nOn-page match: ' +
+                    fj.probe.matchedSelector +
+                    (fj.probe.state ? ' (' + fj.probe.state + ')' : '') +
+                    (fj.probe.currentUrl ? '\nInteractive tab URL: ' + fj.probe.currentUrl : '');
+                }
+                if (fj.uploadAreaPresent) {
+                  probeBlock +=
+                    '\n[data-testid="upload-area"] is attached — upload step may receive canonical upload fallbacks before reorder.';
+                }
+                showIvOperationNotice(
+                  head + probeBlock + (fj.message ? '\n' + fj.message : '') + '\n' + timing,
+                  fj.caveat || '',
+                  'neutral'
+                );
+                if (fj.changed) delete ivStepRunStatus[row.stepId];
+              } catch (err) {
+                const ms = Date.now() - t0;
+                const m = err && err.message ? err.message : String(err);
+                log('iv force_fix: ' + m + ' (' + ms + ' ms)');
+                showIvOperationNotice(
+                  'Force fix did not apply.',
+                  m + '\n\nIf you see a fetch or network error, open the dashboard via the http:// URL from `python -m agent.cli ui` (not as a local file).',
+                  'error'
+                );
+              } finally {
+                ffBtn.removeAttribute('aria-busy');
+                ivForceFixStep = null;
+                await pollInteractiveOnce();
+              }
+            };
+          }
+
+          const addAfter = document.createElement('button');
+          addAfter.type = 'button';
+          addAfter.className = 'ghost';
+          addAfter.textContent = '＋';
+          addAfter.title = 'Insert a new step after step ' + stepNo;
+          addAfter.disabled = anyRunBusy;
+          addAfter.onclick = () =>
+            openIvInsert(
+              row.stepId,
+              'Insert after step ' + stepNo + ' — choose kind and fields, then Insert step.'
+            );
+
+          const rm = document.createElement('button');
+          rm.type = 'button';
+          rm.className = 'danger';
+          rm.textContent = 'Remove';
+          rm.disabled = anyRunBusy;
+          rm.onclick = async () => {
+            if (ivClientRunStep != null || ivRangeBusy || serverRunBusy) return;
+            try {
+              await api('POST', '/api/interactive/delete_step', { stepId: row.stepId });
+              delete ivStepRunStatus[row.stepId];
+              log('iv delete ' + row.stepId);
+              await pollInteractiveOnce();
+            } catch (e) {
+              log('iv delete: ' + (e && e.message ? e.message : String(e)));
+            }
+          };
+
+          act.appendChild(run);
+          act.appendChild(fixBtn);
+          if (ffBtn) act.appendChild(ffBtn);
+          act.appendChild(addAfter);
+          act.appendChild(rm);
+
+          li.appendChild(left);
+          li.appendChild(metaWrap);
+          li.appendChild(act);
+          ul.appendChild(li);
+        });
+        return true;
+      } catch (e) {
+        if (hint) hint.textContent = 'interactive state: ' + (e && e.message ? e.message : String(e));
+        return false;
+      }
+    }
+
+    async function refresh() {
+      try {
+        const s = await api('GET', '/api/state');
+        const pill = document.getElementById('statusPill');
+        if (s.active) {
+          pill.textContent = s.armed ? 'recording · capture on' : 'recording · capture off';
+          pill.className = 'pill' + (s.pickPending || !s.armed ? ' warn' : '');
+        } else {
+          pill.textContent = 'idle';
+          pill.className = 'pill';
+        }
+        const banner = document.getElementById('pickBanner');
+        const btext = document.getElementById('pickBannerText');
+        if (s.pickPending && s.pickIntent && s.pickIntent.kind) {
+          banner.classList.add('on');
+          btext.textContent = s.pickIntent.kind + ' (state=' + (s.pickIntent.state || '') + ')';
+        } else {
+          banner.classList.remove('on');
+          btext.textContent = '';
+        }
+        const steps = s.steps || [];
+        const count = typeof s.step_count === 'number' ? s.step_count : steps.length;
+        const countPill = document.getElementById('stepCountPill');
+        if (countPill) countPill.textContent = String(count);
+        const emptyEl = document.getElementById('stepsEmpty');
+        if (emptyEl) emptyEl.style.display = count === 0 ? 'block' : 'none';
+        const ul = document.getElementById('stepList');
+        ul.innerHTML = '';
+        steps.forEach((st) => {
+          const li = document.createElement('li');
+          const meta = document.createElement('span');
+          meta.className = 'meta';
+          const sel = (st.primarySelector || '').slice(0, 100);
+          const det = (st.detail || '').slice(0, 100);
+          const line = [st.action, sel || det || st.stepId].filter(Boolean).join(' — ');
+          meta.textContent = det && sel ? st.action + ' — ' + sel + ' · ' + det : line;
+          const actions = document.createElement('span');
+          actions.className = 'actions';
+          const up = document.createElement('button');
+          up.type = 'button';
+          up.textContent = '↑';
+          up.title = 'Move up';
+          up.onclick = () => control({ action: 'move_step_up', stepId: st.stepId });
+          const down = document.createElement('button');
+          down.type = 'button';
+          down.textContent = '↓';
+          down.title = 'Move down';
+          down.onclick = () => control({ action: 'move_step_down', stepId: st.stepId });
+          const rm = document.createElement('button');
+          rm.type = 'button';
+          rm.className = 'danger';
+          rm.textContent = 'Remove';
+          rm.onclick = () => control({ action: 'delete_step', stepId: st.stepId });
+          actions.appendChild(up);
+          actions.appendChild(down);
+          actions.appendChild(rm);
+          li.appendChild(meta);
+          li.appendChild(actions);
+          ul.appendChild(li);
+        });
+        document.getElementById('paths').textContent = s.stepgraphPath
+          ? 'stepgraph: ' + s.stepgraphPath + '\nmanifest: ' + (s.manifestPath || '')
+          : '';
+        await pollInteractiveOnce();
+      } catch (e) {
+        logBackgroundPollError('state', e);
+        const pill = document.getElementById('statusPill');
+        if (pill) {
+          pill.textContent = 'no API';
+          pill.className = 'pill warn';
+        }
+      }
+    }
+    document.getElementById('btnStart').onclick = async () => {
+      const url = document.getElementById('startUrl').value.trim();
+      if (!url) { log('Enter a URL'); return; }
+      try {
+        await api('POST', '/api/session/start', {
+          url,
+          storage_state: document.getElementById('storageState').value.trim() || null,
+          headless: document.getElementById('headless').checked,
+          record_armed_start: document.getElementById('armedStart').checked,
+        });
+        log('Session started');
+        refresh();
+      } catch (e) { log('start: ' + e.message); }
+    };
+    document.getElementById('btnStop').onclick = async () => {
+      try {
+        const j = await api('POST', '/api/session/stop', {});
+        const rid = j.run_id || j.runId || '';
+        const n = j.step_count ?? j.stepCount ?? '';
+        const sg = j.stepgraphPath || j.stepgraph_path;
+        const mf = j.manifestPath || j.manifest_path;
+        log('Saved run ' + rid + ' steps=' + n);
+        if (sg) log('stepgraph: ' + sg);
+        if (mf) log('manifest: ' + mf);
+        refresh();
+        refreshRunsList();
+      } catch (e) { log('stop: ' + e.message); }
+    };
+    async function control(payload) {
+      try {
+        await api('POST', '/api/control', payload);
+        log('control ' + (payload.action || ''));
+        refresh();
+      } catch (e) { log('control: ' + e.message); }
+    }
+    document.getElementById('btnArm').onclick = () => control({ action: 'arm' });
+    document.getElementById('btnDisarm').onclick = () => control({ action: 'disarm' });
+    document.getElementById('btnApplyMode').onclick = () =>
+      control({ action: 'set_mode', mode: document.getElementById('modeSelect').value });
+    document.getElementById('btnPickWait').onclick = () => control(pickPayload('wait_for'));
+    document.getElementById('btnPickVisible').onclick = () => control(pickPayload('assert_visible'));
+    document.getElementById('btnPickText').onclick = () => control(pickPayload('assert_text'));
+    async function startRecorderUploadPick() {
+      try {
+        const upTa = document.getElementById('uploadPaths');
+        let parts = parseUploadPaths(upTa && upTa.value ? upTa.value : '');
+        if (!parts.length) {
+          const def = (upTa && upTa.value.trim()) || '';
+          const raw = window.prompt(
+            'Absolute file path(s) to upload (required before you click the control on the app page). Multiple files: commas or separate lines.',
+            def
+          );
+          if (raw === null) {
+            log('upload pick cancelled');
+            return;
+          }
+          parts = parseUploadPaths(raw);
+        }
+        if (!parts.length) {
+          log('upload pick: enter at least one file path (textarea in Upload §4 or in the prompt)');
+          return;
+        }
+        if (upTa) upTa.value = parts.join('\n');
+        await api('POST', '/api/control', { action: 'set_pending_upload_paths', filePaths: parts });
+        await control(pickPayload('upload'));
+      } catch (e) {
+        log('upload pick: ' + (e && e.message ? e.message : String(e)));
+      }
+    }
+    document.getElementById('btnPickUpload').onclick = function () { void startRecorderUploadPick(); };
+    document.getElementById('btnCancelPick').onclick = () => control({ action: 'cancel_pick' });
+    document.getElementById('btnAddWait').onclick = () =>
+      control({
+        action: 'add_wait_for',
+        selector: document.getElementById('waitSelector').value.trim(),
+        state: document.getElementById('waitState').value,
+        timeoutMs: parseInt(document.getElementById('waitTimeout').value, 10) || 30000,
+      });
+    document.getElementById('btnAddUrl').onclick = () =>
+      control({
+        action: 'add_assert_url',
+        expected: document.getElementById('urlExpected').value.trim(),
+        contains: document.getElementById('urlContains').checked,
+      });
+    document.getElementById('btnDelLast').onclick = () => control({ action: 'delete_last_step' });
+    document.getElementById('btnNavigate').onclick = () =>
+      control({
+        action: 'add_navigate',
+        url: document.getElementById('navUrl').value.trim(),
+        timeoutMs: parseInt(document.getElementById('navTimeout').value, 10) || 30000,
+      });
+    document.getElementById('btnAssertTitle').onclick = () =>
+      control({
+        action: 'add_assert_title',
+        expected: document.getElementById('titleExpected').value.trim(),
+        contains: document.getElementById('titleContains').checked,
+      });
+    document.getElementById('btnWaitTimeout').onclick = () =>
+      control({
+        action: 'add_wait_timeout',
+        timeoutMs: parseInt(document.getElementById('sleepMs').value, 10) || 1000,
+      });
+    document.getElementById('btnFrameEnter').onclick = () =>
+      control({
+        action: 'add_frame_enter',
+        selector: document.getElementById('frameSelector').value.trim(),
+        timeoutMs: parseInt(document.getElementById('frameTimeout').value, 10) || 30000,
+      });
+    document.getElementById('btnFrameExit').onclick = () => control({ action: 'add_frame_exit' });
+    document.getElementById('btnPickUploadManual').onclick = function () { void startRecorderUploadPick(); };
+    document.getElementById('btnUpload').onclick = () => {
+      const paths = parseUploadPaths(document.getElementById('uploadPaths').value);
+      control({
+        action: 'add_upload',
+        selector: document.getElementById('uploadSelector').value.trim(),
+        filePaths: paths,
+        timeoutMs: parseInt(document.getElementById('uploadTimeout').value, 10) || 30000,
+      });
+    };
+    document.getElementById('btnDialog').onclick = () => {
+      const pt = document.getElementById('dialogPrompt').value.trim();
+      control({
+        action: 'add_dialog_handle',
+        accept: document.getElementById('dialogAccept').checked,
+        promptText: pt || undefined,
+      });
+    };
+
+    let replayPollTimer = null;
+    async function refreshRunsList(silentInitialPoll) {
+      try {
+        const j = await api('GET', '/api/runs');
+        const sel = document.getElementById('savedRunSelect');
+        const cur = sel.value;
+        sel.innerHTML = '';
+        const opt0 = document.createElement('option');
+        opt0.value = '';
+        opt0.textContent = '— select a saved run —';
+        sel.appendChild(opt0);
+        (j.runs || []).forEach((r) => {
+          const o = document.createElement('option');
+          o.value = r.runId;
+          o.textContent = r.runId + ' · ' + (r.stepgraphPath || '').split('/').slice(-2).join('/');
+          sel.appendChild(o);
+        });
+        if (cur && [...sel.options].some((o) => o.value === cur)) sel.value = cur;
+        await loadSavedRunPreviewSteps();
+      } catch (e) {
+        if (silentInitialPoll) logBackgroundPollError('runs list', e);
+        else log('runs list: ' + (e && e.message ? e.message : String(e)));
+      }
+    }
+    async function updateReplayStatus() {
+      try {
+        const st = await api('GET', '/api/replay/status');
+        const line = document.getElementById('replayStatusLine');
+        const pre = document.getElementById('replayLogOut');
+        if (st.running) {
+          line.textContent = 'Replay running… log: ' + (st.logPath || '');
+          pre.style.display = 'block';
+          pre.textContent = st.logTail || '(waiting for output)';
+        } else {
+          if (st.exitCode !== null && st.exitCode !== undefined) {
+            line.textContent = 'Last replay finished with exit code ' + st.exitCode + (st.logPath ? ' · ' + st.logPath : '');
+          } else {
+            line.textContent = st.logPath ? 'Idle. Last log file: ' + st.logPath : 'Idle.';
+          }
+          if (st.logTail) {
+            pre.style.display = 'block';
+            pre.textContent = st.logTail;
+          }
+        }
+        if (!st.running && replayPollTimer) {
+          clearInterval(replayPollTimer);
+          replayPollTimer = null;
+        }
+      } catch (e) {
+        logBackgroundPollError('replay status', e);
+      }
+    }
+    document.getElementById('btnRefreshRuns').onclick = () => refreshRunsList();
+    document.getElementById('savedRunSelect').addEventListener('change', () => {
+      loadSavedRunPreviewSteps();
+    });
+    document.getElementById('btnReplayRun').onclick = async () => {
+      const runId = document.getElementById('savedRunSelect').value.trim();
+      if (!runId) {
+        log('Select a saved run first');
+        return;
+      }
+      try {
+        await api('POST', '/api/replay', { runId });
+        log('Subprocess full replay started for ' + runId);
+        document.getElementById('replayLogOut').style.display = 'block';
+        if (!replayPollTimer) replayPollTimer = setInterval(updateReplayStatus, 1200);
+        updateReplayStatus();
+      } catch (e) {
+        log('replay: ' + e.message);
+      }
+    };
+    document.getElementById('btnReplayStop').onclick = async () => {
+      try {
+        const j = await api('POST', '/api/replay/stop', {});
+        log('replay stop ' + JSON.stringify(j));
+        updateReplayStatus();
+      } catch (e) {
+        log('replay stop: ' + e.message);
+      }
+    };
+    document.getElementById('btnInteractiveStart').onclick = async () => {
+      const runId = document.getElementById('savedRunSelect').value.trim();
+      if (!runId) {
+        log('Select a saved run for interactive');
+        return;
+      }
+      if (ivOpenBusy) {
+        log('Interactive start already in progress — wait for the first request to finish');
+        return;
+      }
+      const btnIv = document.getElementById('btnInteractiveStart');
+      const hintEl = document.getElementById('interactiveHint');
+      const ulEl = document.getElementById('ivStepList');
+      ivOpenBusy = true;
+      if (btnIv) btnIv.disabled = true;
+      if (hintEl) {
+        hintEl.textContent =
+          'Starting interactive replay (browser launch + load can take a while) — numbered steps with Run / Force fix will appear below when ready…';
+      }
+      if (ulEl) {
+        ulEl.innerHTML = '';
+        ulEl.appendChild(ivPlaceholderRow('Starting interactive replay…'));
+      }
+      const startAbort = new AbortController();
+      const startAbortTimer = setTimeout(function () {
+        startAbort.abort();
+      }, 180000);
+      try {
+        await api('POST', '/api/interactive/start', { runId }, startAbort.signal);
+        log('Interactive replay opened for ' + runId);
+        clearIvOperationNotice();
+        Object.keys(ivStepRunStatus).forEach((k) => delete ivStepRunStatus[k]);
+        ivInsertAfterStepId = '__append__';
+        const ip = document.getElementById('ivInsertPanel');
+        if (ip) ip.style.display = 'none';
+        let becameActive = false;
+        try {
+          const deadline = Date.now() + 120000;
+          while (Date.now() < deadline) {
+            becameActive = await pollInteractiveOnce();
+            if (becameActive) break;
+            await new Promise((r) => setTimeout(r, 400));
+          }
+          if (!becameActive && hintEl) {
+            hintEl.textContent =
+              'Interactive replay did not become ready within 2 minutes. Check the Log panel / server output, click Stop interactive if shown, then try again.';
+            log('interactive: state stayed inactive after start — see server logs');
+          }
+        } catch (pe) {
+          log('interactive poll after start: ' + (pe && pe.message ? pe.message : String(pe)));
+          if (hintEl) {
+            hintEl.textContent =
+              'Interactive may be running but the step list failed to load: ' +
+              (pe && pe.message ? pe.message : String(pe)) +
+              ' — try Refresh in the browser or reopen the dashboard.';
+          }
+        }
+        ivOpenBusy = false;
+        await refresh();
+      } catch (e) {
+        log('interactive start: ' + e.message);
+        if (hintEl) hintEl.textContent = '';
+        if (ulEl) {
+          ulEl.innerHTML = '';
+          ulEl.appendChild(
+            ivPlaceholderRow('Could not start interactive replay: ' + (e && e.message ? e.message : String(e)))
+          );
+        }
+      } finally {
+        clearTimeout(startAbortTimer);
+        ivOpenBusy = false;
+        if (btnIv) btnIv.disabled = false;
+      }
+    };
+    document.getElementById('btnInteractiveStop').onclick = async () => {
+      ivOpenBusy = false;
+      try {
+        await api('POST', '/api/interactive/stop', {});
+        log('Interactive replay stopped');
+        clearIvOperationNotice();
+        Object.keys(ivStepRunStatus).forEach((k) => delete ivStepRunStatus[k]);
+        ivInsertAfterStepId = '__append__';
+        const ip = document.getElementById('ivInsertPanel');
+        if (ip) ip.style.display = 'none';
+        await pollInteractiveOnce();
+        refresh();
+      } catch (e) {
+        log('interactive stop: ' + e.message);
+      }
+    };
+    document.getElementById('btnInteractiveSave').onclick = async () => {
+      try {
+        const j = await api('POST', '/api/interactive/save', {});
+        log('Saved interactive graph ' + (j.stepgraphPath || ''));
+        refreshRunsList();
+      } catch (e) {
+        log('interactive save: ' + e.message);
+      }
+    };
+    document.getElementById('btnIvRange').onclick = async () => {
+      const a = document.getElementById('ivFrom').value;
+      const b = document.getElementById('ivTo').value;
+      if (!a || !b) {
+        log('Run range needs two real steps — open interactive replay first, or wait until the from/to menus list step ids (not “— interactive off —”).');
+        return;
+      }
+      if (ivClientRunStep != null || ivRangeBusy) return;
+      ivRangeBusy = true;
+      try {
+        await api('POST', '/api/interactive/run_range', { fromStepId: a, toStepId: b });
+        log('iv range ' + a + ' … ' + b);
+      } catch (e) {
+        log('iv range: ' + e.message);
+      } finally {
+        ivRangeBusy = false;
+        await pollInteractiveOnce();
+      }
+    };
+    document.getElementById('ivInsKind').addEventListener('change', syncIvInsertRows);
+    async function interactiveAwaitPickResult() {
+      const deadline = Date.now() + 120000;
+      let seenPending = false;
+      while (Date.now() < deadline) {
+        const st = await api('GET', '/api/interactive/state');
+        if (st.pickPending) seenPending = true;
+        if (st.pickResult) {
+          const j = await api('POST', '/api/interactive/consume_pick', {});
+          return j.pickResult;
+        }
+        if (seenPending && !st.pickPending) return null;
+        await new Promise((x) => setTimeout(x, 250));
+      }
+      throw new Error('Pick timed out — click an element in the browser or Cancel pick');
+    }
+    document.getElementById('btnIvPickSel').onclick = async () => {
+      try {
+        await api('POST', '/api/interactive/begin_pick', {
+          kind: 'assert_visible',
+          state: 'visible',
+          timeoutMs: 30000,
+          contains: true,
+        });
+        log('Pick selector: use the browser tab — hover, then click an element');
+        const r = await interactiveAwaitPickResult();
+        if (!r || !r.primarySelector) {
+          log('Pick cancelled');
+          return;
+        }
+        document.getElementById('ivInsSelector').value = r.primarySelector;
+        log('Selector filled (' + String(r.primarySelector).slice(0, 72) + '…)');
+      } catch (e) {
+        log('pick: ' + (e && e.message ? e.message : String(e)));
+      }
+    };
+    document.getElementById('btnIvPickWait').onclick = async () => {
+      try {
+        const state = document.getElementById('ivInsWaitState').value;
+        const timeoutMs = parseInt(document.getElementById('ivInsTimeout').value, 10) || 30000;
+        await api('POST', '/api/interactive/begin_pick', {
+          kind: 'wait_for',
+          state,
+          timeoutMs,
+          contains: true,
+        });
+        log('Pick wait_for: use the browser tab — click target element');
+        const r = await interactiveAwaitPickResult();
+        if (!r || !r.primarySelector) {
+          log('Pick cancelled');
+          return;
+        }
+        document.getElementById('ivInsKind').value = 'wait_for';
+        syncIvInsertRows();
+        document.getElementById('ivInsSelector').value = r.primarySelector;
+        log('wait_for target picked');
+      } catch (e) {
+        log('pick: ' + (e && e.message ? e.message : String(e)));
+      }
+    };
+    document.getElementById('btnIvPickText').onclick = async () => {
+      try {
+        const contains = document.getElementById('ivInsContains').checked;
+        const timeoutMs = parseInt(document.getElementById('ivInsTimeout').value, 10) || 30000;
+        await api('POST', '/api/interactive/begin_pick', {
+          kind: 'assert_text',
+          state: 'visible',
+          timeoutMs,
+          contains,
+        });
+        log('Pick assert_text: use the browser tab — click element with text');
+        const r = await interactiveAwaitPickResult();
+        if (!r || !r.primarySelector) {
+          log('Pick cancelled');
+          return;
+        }
+        document.getElementById('ivInsKind').value = 'assert_text';
+        syncIvInsertRows();
+        document.getElementById('ivInsSelector').value = r.primarySelector;
+        if (r.expectedText) document.getElementById('ivInsExpected').value = r.expectedText;
+        if (typeof r.contains === 'boolean') document.getElementById('ivInsContains').checked = r.contains;
+        log('assert_text picked');
+      } catch (e) {
+        log('pick: ' + (e && e.message ? e.message : String(e)));
+      }
+    };
+    document.getElementById('btnIvPickUpload').onclick = async () => {
+      try {
+        const upEl = document.getElementById('ivInsUploadPaths');
+        let parts = parseUploadPaths(upEl && upEl.value ? upEl.value : '');
+        if (!parts.length) {
+          const raw = window.prompt(
+            'Absolute file path(s) to upload (comma-separated or one path). These are stored in the insert form; you can edit the textarea after pick.',
+            (upEl && upEl.value.trim()) || ''
+          );
+          if (raw === null) {
+            log('upload pick cancelled');
+            return;
+          }
+          parts = parseUploadPaths(raw);
+        }
+        if (!parts.length) {
+          log('upload pick: enter at least one file path (textarea above or in the prompt)');
+          return;
+        }
+        if (upEl) upEl.value = parts.join('\n');
+        const timeoutMs = parseInt(document.getElementById('ivInsTimeout').value, 10) || 30000;
+        await api('POST', '/api/interactive/begin_pick', {
+          kind: 'upload',
+          state: 'visible',
+          timeoutMs,
+          contains: true,
+        });
+        log('Pick upload: click the upload drop zone or button in the browser tab');
+        const r = await interactiveAwaitPickResult();
+        if (!r || !r.primarySelector) {
+          log('Pick cancelled');
+          return;
+        }
+        document.getElementById('ivInsKind').value = 'upload';
+        syncIvInsertRows();
+        document.getElementById('ivInsSelector').value = r.primarySelector;
+        const ta = document.getElementById('ivInsUploadPaths');
+        if (ta) ta.focus();
+        log('Upload control picked — paths are in the field below (edit if needed), then Insert step');
+      } catch (e) {
+        log('pick: ' + (e && e.message ? e.message : String(e)));
+      }
+    };
+    document.getElementById('btnIvPickCancel').onclick = async () => {
+      try {
+        await api('POST', '/api/interactive/cancel_pick', {});
+        log('pick cancelled');
+      } catch (e) {
+        log('pick cancel: ' + (e && e.message ? e.message : String(e)));
+      }
+    };
+    document.getElementById('btnIvInsert').onclick = async () => {
+      try {
+        const payload = buildIvInsertPayload();
+        const j = await api('POST', '/api/interactive/insert_step', payload);
+        log('iv insert ' + (j.stepId || ''));
+        const ip = document.getElementById('ivInsertPanel');
+        if (ip) ip.style.display = 'none';
+        await pollInteractiveOnce();
+      } catch (e) {
+        log('iv insert: ' + e.message);
+      }
+    };
+    document.getElementById('btnIvInsertClose').onclick = () => {
+      const ip = document.getElementById('ivInsertPanel');
+      if (ip) ip.style.display = 'none';
+    };
+    document.getElementById('btnDuplicateRun').onclick = async () => {
+      const sourceRunId = document.getElementById('savedRunSelect').value.trim();
+      if (!sourceRunId) {
+        log('Select a saved run to duplicate');
+        return;
+      }
+      const targetRunId = document.getElementById('forkRunId').value.trim();
+      try {
+        const body = { sourceRunId };
+        if (targetRunId) body.targetRunId = targetRunId;
+        const j = await api('POST', '/api/runs/duplicate', body);
+        log('Duplicated → ' + (j.targetRunId || '') + ' · ' + (j.stepgraphPath || ''));
+        document.getElementById('forkRunId').value = '';
+        refreshRunsList();
+      } catch (e) {
+        log('duplicate: ' + e.message);
+      }
+    };
+
+    setInterval(refresh, 2000);
+    refresh();
+    refreshRunsList(true);
+    setInterval(updateReplayStatus, 3000);
+    updateReplayStatus();
+  </script>
+</body>
+</html>

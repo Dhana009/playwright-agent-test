@@ -15,6 +15,7 @@ policy:
   review_threshold: 0.70
   domain_allowlist: []
   domain_denylist: []
+  # Empty: any absolute upload path is allowed (local UI / replay). Set roots (e.g. ["${HOME}/Downloads"]) to harden.
   upload_root_allowlist: []
   allow_file_urls: false
 

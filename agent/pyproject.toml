@@ -21,6 +21,7 @@ dependencies = [
   "aiosqlite",
   "structlog",
   "python-dotenv",
+  "aiohttp>=3.9,<4",
 ]
 
 [project.scripts]

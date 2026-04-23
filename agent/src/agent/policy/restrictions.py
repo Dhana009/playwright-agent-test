@@ -113,18 +113,14 @@ class RestrictionsPolicy:
         if not paths:
             return []
 
-        if not self._upload_roots:
-            decision = RestrictionDecision(
-                allowed=False,
-                reasonCode="upload_roots_not_configured",
-                summary="Upload blocked because no upload root allowlist is configured.",
-                decisionPath=["restrictions_v1", "kind=upload_paths", "blocked=no_upload_roots"],
-            )
-            raise RestrictionViolation(decision)
-
         normalized: list[str] = []
         for raw_path in paths:
-            resolved = _resolve_path(raw_path)
+            resolved = _resolve_path(str(raw_path))
+            if not self._upload_roots:
+                # Empty allowlist: do not block (local dashboard / interactive replay). When
+                # ``upload_root_allowlist`` is set, paths must stay under those roots.
+                normalized.append(str(resolved))
+                continue
             if not _is_within_any_root(resolved, self._upload_roots):
                 decision = RestrictionDecision(
                     allowed=False,

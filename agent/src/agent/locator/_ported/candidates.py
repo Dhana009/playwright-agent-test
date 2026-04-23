@@ -13,6 +13,96 @@ class PortedCandidate:
     strategy: str
 
 
+def _append_playwright_scoped_chain_candidates(
+    out: list[PortedCandidate],
+    *,
+    tag: str,
+    testid: str | None,
+    element_id: str | None,
+    role: str | None,
+    aria_label: str | None,
+    text: str | None,
+    parents: Any,
+) -> None:
+    """Playwright-style narrowing: ancestor >> descendant (same idea as locator().filter() / chaining).
+
+    Flat ``[data-testid="x"]`` often matches duplicates; scoping under a parent testid or id
+    prefers a unique match without relying on ``nth=0``.
+    """
+    if not isinstance(parents, list):
+        return
+
+    name_hint = (aria_label or text or "")[:80].strip()
+
+    for depth, raw_parent in enumerate(parents[:5]):
+        if not isinstance(raw_parent, dict):
+            continue
+        parent_testid = _as_str(raw_parent.get("testid"))
+        parent_id = _as_str(raw_parent.get("id"))
+        base = 0.72 + depth * 0.015
+
+        if testid and parent_testid:
+            out.append(
+                PortedCandidate(
+                    base,
+                    f"pw-chain:ancestor{depth}-testid>>testid",
+                    f'[data-testid={_quote(parent_testid)}] >> [data-testid={_quote(testid)}]',
+                    "scoped_chain",
+                )
+            )
+        if testid and parent_id:
+            out.append(
+                PortedCandidate(
+                    base + 0.002,
+                    f"pw-chain:ancestor{depth}-id>>testid",
+                    f'#{_escape_css_identifier(parent_id)} >> [data-testid={_quote(testid)}]',
+                    "scoped_chain",
+                )
+            )
+        if element_id and parent_testid:
+            out.append(
+                PortedCandidate(
+                    base + 0.004,
+                    f"pw-chain:ancestor{depth}-testid>>id",
+                    f'[data-testid={_quote(parent_testid)}] >> #{_escape_css_identifier(element_id)}',
+                    "scoped_chain",
+                )
+            )
+        if role and name_hint and parent_testid:
+            out.append(
+                PortedCandidate(
+                    base + 0.006,
+                    f"pw-chain:ancestor{depth}-testid>>role",
+                    f'[data-testid={_quote(parent_testid)}] >> [role={_quote(role)}]:has-text({_quote(name_hint)})',
+                    "scoped_chain",
+                )
+            )
+        if name_hint and parent_testid and _is_stable_text(name_hint):
+            out.append(
+                PortedCandidate(
+                    base + 0.008,
+                    f"pw-chain:ancestor{depth}-testid>>text",
+                    f'[data-testid={_quote(parent_testid)}] >> {tag}:has-text({_quote(name_hint)})',
+                    "scoped_chain",
+                )
+            )
+
+    if testid and len(parents) >= 2:
+        p0 = parents[0] if isinstance(parents[0], dict) else None
+        p1 = parents[1] if isinstance(parents[1], dict) else None
+        tid0 = _as_str(p0.get("testid")) if p0 else None
+        tid1 = _as_str(p1.get("testid")) if p1 else None
+        if tid0 and tid1:
+            out.append(
+                PortedCandidate(
+                    0.708,
+                    "pw-chain:testid3hop",
+                    f'[data-testid={_quote(tid1)}] >> [data-testid={_quote(tid0)}] >> [data-testid={_quote(testid)}]',
+                    "scoped_chain",
+                )
+            )
+
+
 def build_candidates(target: dict[str, Any]) -> list[PortedCandidate]:
     out: list[PortedCandidate] = []
 
@@ -176,6 +266,17 @@ def build_candidates(target: dict[str, Any]) -> list[PortedCandidate]:
                     strategy="scoped_css",
                 )
             )
+
+    _append_playwright_scoped_chain_candidates(
+        out,
+        tag=tag,
+        testid=testid,
+        element_id=element_id,
+        role=role,
+        aria_label=aria_label,
+        text=text,
+        parents=parents,
+    )
 
     parent = parents[0] if parents else None
     if isinstance(parent, dict):
