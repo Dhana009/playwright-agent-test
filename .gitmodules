@@ -1,0 +1,9 @@
+[submodule "Hermes-Agent"]
+	path = Hermes-Agent
+	url = https://github.com/NousResearch/Hermes-Agent.git
+[submodule "playwright-cli"]
+	path = playwright-cli
+	url = https://github.com/microsoft/playwright-cli
+[submodule "playwright-repo-test"]
+	path = playwright-repo-test
+	url = https://github.com/Dhana009/playwright-repo-test.git

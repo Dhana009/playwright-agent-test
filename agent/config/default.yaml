@@ -1,0 +1,21 @@
+mode: manual
+
+llm:
+  provider: "openai"
+  model: "gpt-5.3-codex-high"
+  api_base: null
+
+cache:
+  enabled: true
+  decision_ttl_seconds: 300
+
+policy:
+  auto_allow_threshold: 0.85
+  review_threshold: 0.70
+  domain_allowlist: []
+  domain_denylist: []
+  upload_root_allowlist: []
+  allow_file_urls: false
+
+storage:
+  sqlite_path: "runs/agent.sqlite"
