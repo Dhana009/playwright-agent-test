@@ -129,6 +129,7 @@ def build_provider_from_settings(
         try:
             return OpenAIProvider(
                 default_model=settings.model,
+                reasoning_effort=settings.reasoning_effort,
                 timeout_seconds=timeout_seconds,
                 telemetry_repository=telemetry_repository,
             )
@@ -142,6 +143,7 @@ def build_provider_from_settings(
             return OpenAICompatibleProvider(
                 default_model=settings.model,
                 base_url=settings.api_base,
+                reasoning_effort=settings.reasoning_effort,
                 timeout_seconds=timeout_seconds,
                 telemetry_repository=telemetry_repository,
             )

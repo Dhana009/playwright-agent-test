@@ -14,6 +14,7 @@ from agent.llm._ported import (
     build_tool_call,
     canonicalize_tool_arguments,
 )
+from agent.llm.openai_request import apply_openai_generation_controls
 from agent.llm.provider import LLMProvider, LLMProviderError, LLMResponse, to_llm_response
 from agent.llm.provider import build_llm_call
 from agent.telemetry.models import CallPurpose, ContextTier
@@ -87,10 +88,12 @@ class OpenAIProvider(LLMProvider):
         self,
         *,
         default_model: str,
+        reasoning_effort: str | None = None,
         timeout_seconds: float | None = None,
         telemetry_repository: TelemetryRepository | None = None,
     ) -> None:
         self._default_model = default_model
+        self._reasoning_effort = reasoning_effort
         self._timeout_seconds = timeout_seconds
         self._client = AsyncOpenAI(timeout=timeout_seconds) if timeout_seconds else AsyncOpenAI()
         self._transport = OpenAITransport()
@@ -137,8 +140,12 @@ class OpenAIProvider(LLMProvider):
             api_kwargs["tools"] = self._transport.convert_tools(tools)
         if temperature is not None:
             api_kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            api_kwargs["max_tokens"] = max_tokens
+        apply_openai_generation_controls(
+            api_kwargs,
+            model=resolved_model,
+            max_tokens=max_tokens,
+            reasoning_effort=self._reasoning_effort,
+        )
         if timeout_seconds is not None:
             api_kwargs["timeout"] = timeout_seconds
         if metadata:

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from openai import AsyncOpenAI
 
 from agent.llm.openai import OpenAITransport
+from agent.llm.openai_request import apply_openai_generation_controls
 from agent.llm.provider import LLMProvider, LLMProviderError, LLMResponse, to_llm_response
 from agent.llm.provider import build_llm_call
 from agent.telemetry.models import CallPurpose, ContextTier
@@ -23,6 +24,7 @@ class OpenAICompatibleProvider(LLMProvider):
         *,
         default_model: str,
         base_url: str | None,
+        reasoning_effort: str | None = None,
         timeout_seconds: float | None = None,
         api_key: str | None = None,
         telemetry_repository: TelemetryRepository | None = None,
@@ -37,6 +39,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         self._default_model = default_model
         self._base_url = base_url
+        self._reasoning_effort = reasoning_effort
         self._client = (
             AsyncOpenAI(
                 api_key=resolved_api_key,
@@ -90,8 +93,12 @@ class OpenAICompatibleProvider(LLMProvider):
             api_kwargs["tools"] = self._transport.convert_tools(tools)
         if temperature is not None:
             api_kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            api_kwargs["max_tokens"] = max_tokens
+        apply_openai_generation_controls(
+            api_kwargs,
+            model=resolved_model,
+            max_tokens=max_tokens,
+            reasoning_effort=self._reasoning_effort,
+        )
         if timeout_seconds is not None:
             api_kwargs["timeout"] = timeout_seconds
         if metadata:

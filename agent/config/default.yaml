@@ -2,8 +2,9 @@ mode: manual
 
 llm:
   provider: "openai"
-  model: "gpt-5.3-codex-high"
+  model: "gpt-5.4-mini"
   api_base: null
+  reasoning_effort: "high"
 
 cache:
   enabled: true

@@ -12,8 +12,9 @@ class LLMSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: str = "openai"
-    model: str = "gpt-5.3-codex-high"
+    model: str = "gpt-5.4-mini"
     api_base: str | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh"] | None = None
 
 
 class CacheSettings(BaseModel):

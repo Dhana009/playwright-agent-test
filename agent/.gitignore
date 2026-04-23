@@ -3,3 +3,5 @@ artifacts/
 .venv/
 __pycache__/
 *.sqlite
+.env
+.env.test
