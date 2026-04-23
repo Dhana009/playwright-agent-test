@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fixture Tabs</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; }
+      .tabs button { margin-right: 0.5rem; }
+      .tab-panel { display: none; margin-top: 1rem; }
+      .tab-panel.active { display: block; }
+    </style>
+  </head>
+  <body>
+    <h1>Tabs</h1>
+    <div class="tabs" role="tablist" aria-label="Fixture tabs">
+      <button type="button" role="tab" aria-controls="panel-a" data-panel="panel-a">Panel A</button>
+      <button type="button" role="tab" aria-controls="panel-b" data-panel="panel-b">Panel B</button>
+      <a id="new-tab-link" href="/dashboard.html" target="_blank" rel="noreferrer">Open dashboard tab</a>
+    </div>
+    <section id="panel-a" class="tab-panel active" role="tabpanel">Tab A content</section>
+    <section id="panel-b" class="tab-panel" role="tabpanel">Tab B content</section>
+    <script>
+      const tabs = document.querySelectorAll("[role='tab']");
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          const targetId = tab.dataset.panel;
+          document.querySelectorAll(".tab-panel").forEach((panel) => {
+            panel.classList.toggle("active", panel.id === targetId);
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,60 @@
+{
+  "runId": "01A0FIXTURETABSNAVIGATION00000",
+  "version": "1.0",
+  "steps": [
+    {
+      "stepId": "01A0STEPTABSNAVIGATION000001",
+      "mode": "navigation",
+      "action": "navigate",
+      "metadata": {
+        "url": "http://127.0.0.1:8787/tabs.html"
+      }
+    },
+    {
+      "stepId": "01A0STEPTABSNAVIGATION000002",
+      "mode": "action",
+      "action": "click",
+      "target": {
+        "primarySelector": "[data-panel='panel-b']",
+        "fallbackSelectors": [
+          "button[aria-controls='panel-b']"
+        ],
+        "confidenceScore": 0.94,
+        "reasoningHint": "tab button target",
+        "frameContext": []
+      }
+    },
+    {
+      "stepId": "01A0STEPTABSNAVIGATION000003",
+      "mode": "assertion",
+      "action": "assert_text",
+      "target": {
+        "primarySelector": "#panel-b",
+        "fallbackSelectors": [
+          "[role='tabpanel']#panel-b"
+        ],
+        "confidenceScore": 0.9,
+        "reasoningHint": "panel content",
+        "frameContext": []
+      },
+      "postconditions": [
+        {
+          "type": "text_matches",
+          "payload": {
+            "contains": "Tab B content"
+          }
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "fromStepId": "01A0STEPTABSNAVIGATION000001",
+      "toStepId": "01A0STEPTABSNAVIGATION000002"
+    },
+    {
+      "fromStepId": "01A0STEPTABSNAVIGATION000002",
+      "toStepId": "01A0STEPTABSNAVIGATION000003"
+    }
+  ]
+}

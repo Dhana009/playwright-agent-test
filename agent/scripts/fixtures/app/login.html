@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fixture Login</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; }
+      form { display: grid; gap: 0.75rem; max-width: 22rem; }
+      label { display: grid; gap: 0.25rem; }
+      button { width: fit-content; }
+    </style>
+  </head>
+  <body>
+    <h1>Fixture Login</h1>
+    <form id="login-form">
+      <label>
+        Email
+        <input id="email" name="email" type="email" placeholder="name@example.test" required />
+      </label>
+      <label>
+        Password
+        <input id="password" name="password" type="password" required />
+      </label>
+      <button id="submit-login" data-testid="submit-login" type="submit">Sign in</button>
+    </form>
+    <p id="message" role="status"></p>
+    <script>
+      const form = document.querySelector("#login-form");
+      const message = document.querySelector("#message");
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        message.textContent = "Login successful";
+        // Defer navigation slightly so test recorders can flush in-page capture queues
+        // before the execution context is destroyed.
+        setTimeout(() => {
+          window.location.href = "/dashboard.html";
+        }, 150);
+      });
+    </script>
+  </body>
+</html>

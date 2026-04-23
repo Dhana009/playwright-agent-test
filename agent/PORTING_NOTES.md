@@ -370,6 +370,43 @@ What was implemented:
 - Implemented call-purpose tagging for telemetry (`plan`, `classification`, `repair`, `review`) on every provider call.
 - Extended Phase 9 smoke script with a mock-provider orchestrator run so orchestration logic can be validated without external API keys.
 
+## Phase A10 - Policy and audit (smoke)
+
+Committed artifacts:
+- `agent/scripts/smoke/phase_a10.py` — approval classifier matrix vs `docs/07-security-and-guardrails.md` (via `PHASE3_TOOL_NAMES`), hard-approval deny/allow on `StepGraphRunner`, restriction `reasonCode` assertions, and audit.jsonl completeness (mode switch, approvals, tool calls, runner retry, intervention).
+- `agent/scripts/smoke/phase_10.py` — thin shim that delegates to `phase_a10.py` for older invocations.
+
+## Phase A12 - Benchmark / KPI (smoke)
+
+Committed artifacts:
+- `agent/scripts/smoke/phase_a12.py` — seeds SQLite + telemetry and asserts every key in `BENCHMARK_KPI_FIELD_SPECS` (`docs/08-benchmark-and-kpis.md` / `agent report`) is present in `RunBenchmarkReport.kpis`, validates bench case matrix for Manual/LLM/Hybrid, checks `_mean_kpis` arithmetic mean, and runs `uv run python -m agent.cli bench` on a one-step navigate graph against the fixture server (three mode-only cases). Set `SKIP_BENCH_A12=1` to skip the browser bench.
+
+## Phase A11 - Export (smoke)
+
+Committed artifacts:
+- `agent/scripts/smoke/phase_a11.py` — export confidence gating (0.6 / 0.75 / 0.9 vs default thresholds), portable manifest JSON schema validation + password-fill redaction, and generated `.spec.ts` executed via `npx playwright test` from `playwright-cli/` (runs `npm ci` there on demand). Set `SKIP_PLAYWRIGHT_A11=1` to skip the browser test when offline.
+
+## Phase A13 - Integration chain (smoke)
+
+Committed artifacts:
+- `agent/scripts/smoke/phase_a13.py` — end-to-end fixture chain on `fixture_login_and_navigate.json`: same-session cache tail replay (`REUSE` on dashboard assert), deliberate selector break + `step_failed`, `fix_cmd` manual fix with `runs_root`-aligned checkpoints/audit, `ModeController` switch to LLM (event smoke only; no live LLM), resume from failed step with dashboard warmup, `LearnedRepairStore` candidate row, portable manifest + KPI report key coverage, and optional `npx playwright test` of the exported spec against the same fixture server. Set `SKIP_PLAYWRIGHT_A13=1` to skip the Playwright CLI step.
+- `agent/scripts/smoke/phase_13.py` — shim delegating to `phase_a13.py`.
+
+## Gate A - Phase A sign-off (aggregator)
+
+Committed artifacts:
+- `agent/scripts/smoke/gate_a.py` — runs Task **A0–A13** smokes (`phase_0.py` through `phase_a13.py`) in plan order. After a successful run, fails if any `artifacts/test-runs/*/bugs.jsonl` file touched during that invocation records an **open** bug with `error_class` in `{runtime, logical}`. Use `--quick` to set `SKIP_PLAYWRIGHT_A11`, `SKIP_PLAYWRIGHT_A13`, and `SKIP_BENCH_A12` (full run executes optional Playwright CLI and browser bench matrix).
+
+**Deferred to Phase B (human / real-site):** FlowHub-first-time record, production storage-state reuse, intentional drift healing with a live provider, hybrid mid-run toggles on real apps, cross-session persistence on operator machines, and B9 free-form chaos — see `plan/functional_then_human_test_plan_be149dc5.plan.md` Macro-Phase B. Fixture smokes do not replace those scenarios.
+
+## Phase A9 - LLM cassettes (smoke)
+
+Committed artifacts:
+- `agent/scripts/fixtures/llm_cassettes/*.json` — scrubbed, replay-only payloads shaped like normalized provider completions (OpenAI, Anthropic, OpenAI-compatible).
+- `agent/scripts/smoke/phase_a9.py` — cassette replay provider + orchestrator tier / no-progress / mode-switch assertions without API keys.
+
+**One-time real recording (manual, not CI):** To refresh cassettes from live APIs, run a short `chat.completions` (or equivalent) against each provider with a non-sensitive prompt, capture the normalized `content`, `usage`, and optional `tool_calls`, scrub any PII, and replace the `response` object inside the matching JSON file under `agent/scripts/fixtures/llm_cassettes/`. Keep `provider` and `model` aligned with `build_provider_from_settings` naming. All automated A9 tests replay these files only.
+
 ## Phase 9.5 - Mode switch
 
 Implemented artifacts:

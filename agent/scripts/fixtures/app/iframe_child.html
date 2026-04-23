@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fixture Iframe Child</title>
+  </head>
+  <body>
+    <h2 data-testid="iframe-child-title">Iframe Child</h2>
+    <button id="iframe-action" type="button">Click in frame</button>
+    <p id="iframe-status" role="status"></p>
+    <script>
+      const button = document.querySelector("#iframe-action");
+      const status = document.querySelector("#iframe-status");
+      button.addEventListener("click", () => {
+        status.textContent = "iframe button clicked";
+      });
+    </script>
+  </body>
+</html>

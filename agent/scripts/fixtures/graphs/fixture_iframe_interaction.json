@@ -1,0 +1,91 @@
+{
+  "runId": "01A0FIXTUREIFRAMEINTERACTION000",
+  "version": "1.0",
+  "steps": [
+    {
+      "stepId": "01A0STEPIFRAMEINTERACTION0001",
+      "mode": "navigation",
+      "action": "navigate",
+      "metadata": {
+        "url": "http://127.0.0.1:8787/iframe_parent.html"
+      }
+    },
+    {
+      "stepId": "01A0STEPIFRAMEINTERACTION0002",
+      "mode": "action",
+      "action": "frame_enter",
+      "target": {
+        "primarySelector": "#child-frame",
+        "fallbackSelectors": [
+          "iframe[title='Child frame']"
+        ],
+        "confidenceScore": 0.96,
+        "reasoningHint": "iframe id and title",
+        "frameContext": []
+      }
+    },
+    {
+      "stepId": "01A0STEPIFRAMEINTERACTION0003",
+      "mode": "action",
+      "action": "click",
+      "target": {
+        "primarySelector": "#iframe-action",
+        "fallbackSelectors": [
+          "button:has-text('Click in frame')"
+        ],
+        "confidenceScore": 0.9,
+        "reasoningHint": "iframe child action button",
+        "frameContext": [
+          "#child-frame"
+        ]
+      }
+    },
+    {
+      "stepId": "01A0STEPIFRAMEINTERACTION0004",
+      "mode": "assertion",
+      "action": "assert_text",
+      "target": {
+        "primarySelector": "#iframe-status",
+        "fallbackSelectors": [
+          "[role='status']"
+        ],
+        "confidenceScore": 0.88,
+        "reasoningHint": "status after click",
+        "frameContext": [
+          "#child-frame"
+        ]
+      },
+      "postconditions": [
+        {
+          "type": "text_matches",
+          "payload": {
+            "contains": "clicked"
+          }
+        }
+      ]
+    },
+    {
+      "stepId": "01A0STEPIFRAMEINTERACTION0005",
+      "mode": "action",
+      "action": "frame_exit"
+    }
+  ],
+  "edges": [
+    {
+      "fromStepId": "01A0STEPIFRAMEINTERACTION0001",
+      "toStepId": "01A0STEPIFRAMEINTERACTION0002"
+    },
+    {
+      "fromStepId": "01A0STEPIFRAMEINTERACTION0002",
+      "toStepId": "01A0STEPIFRAMEINTERACTION0003"
+    },
+    {
+      "fromStepId": "01A0STEPIFRAMEINTERACTION0003",
+      "toStepId": "01A0STEPIFRAMEINTERACTION0004"
+    },
+    {
+      "fromStepId": "01A0STEPIFRAMEINTERACTION0004",
+      "toStepId": "01A0STEPIFRAMEINTERACTION0005"
+    }
+  ]
+}

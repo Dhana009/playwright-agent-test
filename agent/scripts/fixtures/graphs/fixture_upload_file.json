@@ -1,0 +1,55 @@
+{
+  "runId": "01A0FIXTUREUPLOADFILE000000000",
+  "version": "1.0",
+  "steps": [
+    {
+      "stepId": "01A0STEPUPLOADFILE0000000001",
+      "mode": "navigation",
+      "action": "navigate",
+      "metadata": {
+        "url": "http://127.0.0.1:8787/upload.html"
+      }
+    },
+    {
+      "stepId": "01A0STEPUPLOADFILE0000000002",
+      "mode": "action",
+      "action": "upload",
+      "target": {
+        "primarySelector": "#file-input",
+        "fallbackSelectors": [
+          "input[type='file']"
+        ],
+        "confidenceScore": 0.97,
+        "reasoningHint": "file input id",
+        "frameContext": []
+      },
+      "metadata": {
+        "filePathRef": "fixture-upload.txt"
+      }
+    },
+    {
+      "stepId": "01A0STEPUPLOADFILE0000000003",
+      "mode": "assertion",
+      "action": "assert_text",
+      "target": {
+        "primarySelector": "#file-result",
+        "fallbackSelectors": [
+          "[role='status']"
+        ],
+        "confidenceScore": 0.92,
+        "reasoningHint": "upload result status",
+        "frameContext": []
+      }
+    }
+  ],
+  "edges": [
+    {
+      "fromStepId": "01A0STEPUPLOADFILE0000000001",
+      "toStepId": "01A0STEPUPLOADFILE0000000002"
+    },
+    {
+      "fromStepId": "01A0STEPUPLOADFILE0000000002",
+      "toStepId": "01A0STEPUPLOADFILE0000000003"
+    }
+  ]
+}

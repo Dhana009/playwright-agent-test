@@ -5,6 +5,7 @@ import typer
 from agent.cli.bench_cmd import bench as bench_command
 from agent.cli.export_cmd import export as export_command
 from agent.cli.fix_cmd import fix as fix_command
+from agent.cli.human_session_cmd import app as human_session_app
 from agent.cli.mode_cmd import app as mode_app
 from agent.cli.record_cmd import record as record_command
 from agent.cli.report_cmd import report as report_command
@@ -26,6 +27,7 @@ app.add_typer(mode_app, name="mode")
 app.command("report")(report_command)
 app.command("bench")(bench_command)
 app.command("export")(export_command)
+app.add_typer(human_session_app, name="human")
 
 
 def main() -> None:

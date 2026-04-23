@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fixture Dialogs</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; }
+      .buttons { display: flex; gap: 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Dialogs</h1>
+    <div class="buttons">
+      <button id="show-alert" type="button">Alert</button>
+      <button id="show-confirm" type="button">Confirm</button>
+      <button id="show-prompt" type="button">Prompt</button>
+    </div>
+    <p id="dialog-result" role="status"></p>
+    <script>
+      const result = document.querySelector("#dialog-result");
+
+      document.querySelector("#show-alert").addEventListener("click", () => {
+        alert("alert opened");
+        result.textContent = "alert handled";
+      });
+
+      document.querySelector("#show-confirm").addEventListener("click", () => {
+        const accepted = confirm("confirm opened");
+        result.textContent = accepted ? "confirm accepted" : "confirm dismissed";
+      });
+
+      document.querySelector("#show-prompt").addEventListener("click", () => {
+        const value = prompt("prompt opened", "fixture-default");
+        result.textContent = value === null ? "prompt dismissed" : `prompt value: ${value}`;
+      });
+    </script>
+  </body>
+</html>

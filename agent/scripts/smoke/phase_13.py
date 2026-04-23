@@ -1,4 +1,4 @@
-"""Backward-compatible entry point: policy smoke lives in `phase_a10.py` (Task A10)."""
+"""Backward-compatible entry point: A13 integration smoke lives in `phase_a13.py`."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from phase_a10 import main as a10_main  # noqa: E402
+from phase_a13 import main as a13_main  # noqa: E402
 
 
 async def main() -> int:
-    return await a10_main()
+    return await a13_main()
 
 
 if __name__ == "__main__":

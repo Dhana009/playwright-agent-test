@@ -1,0 +1,134 @@
+{
+  "runId": "__RUN_ID__",
+  "steps": [
+    {
+      "stepId": "__STEP_0__",
+      "mode": "action",
+      "action": "fill",
+      "target": {
+        "primarySelector": "[placeholder=\"name@example.test\"]",
+        "fallbackSelectors": [
+          "#email",
+          "input[name=\"email\"]",
+          "xpath=//*[@id=\"email\"]",
+          "input:nth-child(1) >> nth=0"
+        ],
+        "confidenceScore": 0.828,
+        "frameContext": []
+      },
+      "preconditions": [],
+      "postconditions": [],
+      "timeoutPolicy": {
+        "timeoutMs": 30000,
+        "pollIntervalMs": 250,
+        "waitUntil": null
+      },
+      "recoveryPolicy": {
+        "maxRetries": 0,
+        "retryBackoffMs": 0,
+        "allowedActions": [
+          "retry"
+        ],
+        "failureReasonCodes": []
+      },
+      "metadata": {
+        "sourceEventType": "input",
+        "semanticIntent": "field_input",
+        "intentConfidence": 0.9,
+        "operatorMode": "auto",
+        "frameUrl": "http://fixture.test/login.html",
+        "text": "fixture@example.test"
+      }
+    },
+    {
+      "stepId": "__STEP_1__",
+      "mode": "action",
+      "action": "fill",
+      "target": {
+        "primarySelector": "#password",
+        "fallbackSelectors": [
+          "input[name=\"password\"]",
+          "xpath=//*[@id=\"password\"]",
+          "input:nth-child(1) >> nth=0"
+        ],
+        "confidenceScore": 0.796,
+        "frameContext": []
+      },
+      "preconditions": [],
+      "postconditions": [],
+      "timeoutPolicy": {
+        "timeoutMs": 30000,
+        "pollIntervalMs": 250,
+        "waitUntil": null
+      },
+      "recoveryPolicy": {
+        "maxRetries": 0,
+        "retryBackoffMs": 0,
+        "allowedActions": [
+          "retry"
+        ],
+        "failureReasonCodes": []
+      },
+      "metadata": {
+        "sourceEventType": "input",
+        "semanticIntent": "field_input_redacted",
+        "intentConfidence": 0.9,
+        "operatorMode": "auto",
+        "frameUrl": "http://fixture.test/login.html",
+        "valueRef": "redacted"
+      }
+    },
+    {
+      "stepId": "__STEP_2__",
+      "mode": "action",
+      "action": "click",
+      "target": {
+        "primarySelector": "[data-testid=\"submit-login\"]",
+        "fallbackSelectors": [
+          "button:has-text(\"Sign in\")",
+          "#submit-login",
+          "#login-form button",
+          "button:nth-child(3)",
+          "xpath=//*[@id=\"submit-login\"]"
+        ],
+        "confidenceScore": 0.872,
+        "frameContext": []
+      },
+      "preconditions": [],
+      "postconditions": [],
+      "timeoutPolicy": {
+        "timeoutMs": 30000,
+        "pollIntervalMs": 250,
+        "waitUntil": null
+      },
+      "recoveryPolicy": {
+        "maxRetries": 0,
+        "retryBackoffMs": 0,
+        "allowedActions": [
+          "retry"
+        ],
+        "failureReasonCodes": []
+      },
+      "metadata": {
+        "sourceEventType": "click",
+        "semanticIntent": "click",
+        "intentConfidence": 0.8,
+        "operatorMode": "auto",
+        "frameUrl": "http://fixture.test/login.html"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "fromStepId": "__STEP_0__",
+      "toStepId": "__STEP_1__",
+      "condition": "on_success"
+    },
+    {
+      "fromStepId": "__STEP_1__",
+      "toStepId": "__STEP_2__",
+      "condition": "on_success"
+    }
+  ],
+  "version": "1.0"
+}

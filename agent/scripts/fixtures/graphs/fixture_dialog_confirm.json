@@ -1,0 +1,72 @@
+{
+  "runId": "01A0FIXTUREDIALOGCONFIRM000000",
+  "version": "1.0",
+  "steps": [
+    {
+      "stepId": "01A0STEPDIALOGCONFIRM0000001",
+      "mode": "navigation",
+      "action": "navigate",
+      "metadata": {
+        "url": "http://127.0.0.1:8787/dialogs.html"
+      }
+    },
+    {
+      "stepId": "01A0STEPDIALOGCONFIRM0000002",
+      "mode": "action",
+      "action": "dialog_handle",
+      "metadata": {
+        "accept": false
+      }
+    },
+    {
+      "stepId": "01A0STEPDIALOGCONFIRM0000003",
+      "mode": "action",
+      "action": "click",
+      "target": {
+        "primarySelector": "#show-confirm",
+        "fallbackSelectors": [
+          "button:has-text('Confirm')"
+        ],
+        "confidenceScore": 0.93,
+        "reasoningHint": "unique confirm trigger",
+        "frameContext": []
+      }
+    },
+    {
+      "stepId": "01A0STEPDIALOGCONFIRM0000004",
+      "mode": "assertion",
+      "action": "assert_text",
+      "target": {
+        "primarySelector": "#dialog-result",
+        "fallbackSelectors": [
+          "[role='status']"
+        ],
+        "confidenceScore": 0.9,
+        "reasoningHint": "dialog result status",
+        "frameContext": []
+      },
+      "postconditions": [
+        {
+          "type": "text_matches",
+          "payload": {
+            "contains": "dismissed"
+          }
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "fromStepId": "01A0STEPDIALOGCONFIRM0000001",
+      "toStepId": "01A0STEPDIALOGCONFIRM0000002"
+    },
+    {
+      "fromStepId": "01A0STEPDIALOGCONFIRM0000002",
+      "toStepId": "01A0STEPDIALOGCONFIRM0000003"
+    },
+    {
+      "fromStepId": "01A0STEPDIALOGCONFIRM0000003",
+      "toStepId": "01A0STEPDIALOGCONFIRM0000004"
+    }
+  ]
+}

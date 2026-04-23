@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -147,7 +148,11 @@ class StepGraphRunner:
                     run_id=graph.run_id,
                     actor=self._actor,
                     type=EventType.RUN_PAUSED,
-                    payload={"reason": str(exc), "start_step_id": start_step_id},
+                    payload={
+                        "reason": str(exc),
+                        "start_step_id": start_step_id,
+                        "next_step_id": step.step_id,
+                    },
                 )
             )
             self._logger.info("run_paused", run_id=graph.run_id)
@@ -570,9 +575,7 @@ class StepGraphRunner:
                     button = metadata.get("button", "left")
                     await self._runtime.click(tab_id=tab_id, target=target, button=button, timeout_ms=timeout_ms)
                 elif action == "fill":
-                    text = metadata.get("text")
-                    if not isinstance(text, str):
-                        raise RunnerError("fill requires metadata.text (string).")
+                    text = _resolve_fill_text(metadata)
                     await self._runtime.fill(tab_id=tab_id, target=target, text=text, timeout_ms=timeout_ms)
                 elif action == "type":
                     text = metadata.get("text")
@@ -722,6 +725,41 @@ def _coerce_upload_paths(metadata: dict[str, Any]) -> str | list[str]:
     if isinstance(paths, list) and paths and all(isinstance(item, str) and item.strip() for item in paths):
         return paths
     raise RunnerError("upload requires metadata.filePaths (string or list of strings).")
+
+
+def _resolve_fill_text(metadata: dict[str, Any]) -> str:
+    text = metadata.get("text")
+    if isinstance(text, str):
+        return text
+
+    value_ref = metadata.get("valueRef") or metadata.get("value_ref")
+    if not isinstance(value_ref, str) or not value_ref.strip():
+        raise RunnerError("fill requires metadata.text (string) or metadata.valueRef (string).")
+
+    normalized_ref = value_ref.strip()
+    if normalized_ref.startswith("env:"):
+        env_key = normalized_ref.split(":", 1)[1].strip()
+        if not env_key:
+            raise RunnerError("fill metadata.valueRef env reference is missing a key (expected env:KEY).")
+        env_value = os.getenv(env_key)
+        if not env_value:
+            raise RunnerError(
+                f"fill metadata.valueRef requires environment variable '{env_key}' to be set."
+            )
+        return env_value
+
+    if normalized_ref.lower() == "redacted":
+        fallback = os.getenv("FLOWHUB_PASSWORD")
+        if fallback:
+            return fallback
+        raise RunnerError(
+            "fill metadata.valueRef='redacted' cannot be replayed without a concrete value. "
+            "Set FLOWHUB_PASSWORD or record with metadata.valueRef='env:<KEY>'."
+        )
+
+    raise RunnerError(
+        "Unsupported fill metadata.valueRef format. Expected 'env:<KEY>' or 'redacted'."
+    )
 
 
 def _is_stale_ref_error(exc: Exception) -> bool:

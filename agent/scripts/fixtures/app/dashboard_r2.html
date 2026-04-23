@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fixture Dashboard</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; }
+      nav ul { display: flex; gap: 0.75rem; list-style: none; padding: 0; }
+      nav a { text-decoration: none; color: #1f5aa6; }
+      .layout { display: grid; gap: 1rem; max-width: 56rem; }
+      .two-column { display: grid; gap: 1rem; grid-template-columns: 2fr 1fr; }
+      .panel { border: 1px solid #d9d9d9; border-radius: 0.5rem; padding: 0.75rem; }
+      .modal {
+        position: fixed;
+        inset: 20% 30%;
+        border: 2px solid #2a2a2a;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        background: #fff;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+      }
+    </style>
+  </head>
+  <body data-route-variant="route-v1">
+    <h1 data-testid="dashboard-title">Dashboard</h1>
+    <p>Welcome to the fixture app.</p>
+    <main class="layout">
+      <nav aria-label="Fixture pages">
+        <ul>
+          <li><a href="/dialogs.html">Dialogs</a></li>
+          <li><a href="/dynamic_list.html">Dynamic List</a></li>
+          <li><a href="/upload.html">Upload</a></li>
+          <li><a href="/tabs.html">Tabs</a></li>
+          <li><a href="/iframe_parent.html">Iframe</a></li>
+        </ul>
+      </nav>
+      <section class="two-column">
+        <section
+          id="region-orders"
+          class="panel"
+          aria-label="Orders region"
+          data-region-version="1"
+        >
+          <h2>Recent Orders</h2>
+          <ul id="orders-list">
+            <li>Invoice A - queued</li>
+            <li>Invoice B - queued</li>
+          </ul>
+        </section>
+        <aside class="panel" aria-label="Team panel">
+          <h2>Team Actions</h2>
+          <button type="button" data-fixture-action="primary" data-testid="primary-action">
+            Open Approval Queue
+          </button>
+          <p id="route-indicator" role="status"></p>
+        </aside>
+      </section>
+    </main>
+    <section id="dashboard-modal" class="modal" role="dialog" aria-hidden="true" hidden>
+      <h2>Fixture Modal</h2>
+      <p>This modal is toggled by /mutate/modal.</p>
+    </section>
+    <script src="/fixture_state.js"></script>
+    <script>
+      const routeIndicator = document.querySelector("#route-indicator");
+      function renderRoute() {
+        routeIndicator.textContent = `Route variant: ${document.body.dataset.routeVariant}`;
+      }
+      renderRoute();
+      window.setInterval(renderRoute, 250);
+    </script>
+  </body>
+</html>

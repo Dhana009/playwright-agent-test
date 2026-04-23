@@ -51,6 +51,31 @@ class RunReportWriteResult(BaseModel):
     report_path: str = Field(alias="reportPath")
 
 
+# KPI fields emitted by `_compute_report` / `agent report` — keep aligned with docs/08-benchmark-and-kpis.md.
+BENCHMARK_KPI_FIELD_SPECS: tuple[tuple[str, str, bool], ...] = (
+    ("Tokens / successful step", "tokens_per_successful_step", False),
+    ("Cost / completed flow", "cost_per_completed_flow", False),
+    ("LLM calls / completed flow", "llm_calls_per_completed_flow", False),
+    ("Input tokens / call", "input_tokens_per_call", False),
+    ("Output tokens / call", "output_tokens_per_call", False),
+    ("Token efficiency / resolved step", "token_efficiency_per_resolved_step", False),
+    ("Prompt cache hit ratio", "prompt_cache_hit_ratio", True),
+    ("Flow completion rate", "flow_completion_rate", True),
+    ("First-pass step success rate", "first_pass_step_success_rate", True),
+    ("MTTR-step (ms)", "mttr_step_ms", False),
+    ("Restart avoidance rate", "restart_avoidance_rate", True),
+    ("LLM assist invocation rate", "llm_assist_invocation_rate", True),
+    ("Context reuse ratio", "context_reuse_ratio", True),
+    ("Cache hit rate", "cache_hit_rate", True),
+    ("Partial refresh ratio", "partial_refresh_ratio", True),
+    ("Full refresh ratio", "full_refresh_ratio", True),
+    ("Contradiction rate per 100 steps", "contradiction_rate_per_100_steps", False),
+    ("Repair promotion success rate", "repair_promotion_success_rate", True),
+    ("Tier-0/Tier-1 resolution ratio", "tier0_tier1_resolution_ratio", True),
+    ("No-progress token burn rate", "no_progress_token_burn_rate", True),
+)
+
+
 @dataclass(frozen=True)
 class _RunRow:
     mode: str

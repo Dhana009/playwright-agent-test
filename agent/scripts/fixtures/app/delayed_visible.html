@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Delayed visibility fixture</title>
+  </head>
+  <body>
+    <h1 data-testid="delayed-page-title">Delayed box</h1>
+    <div
+      id="delayed-box"
+      data-testid="delayed-box"
+      style="display: none"
+      aria-hidden="true"
+    >
+      Now visible
+    </div>
+    <script>
+      setTimeout(function () {
+        var el = document.querySelector("[data-testid='delayed-box']");
+        if (el) {
+          el.style.display = "block";
+          el.removeAttribute("aria-hidden");
+        }
+      }, 1000);
+    </script>
+  </body>
+</html>

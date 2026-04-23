@@ -1,0 +1,94 @@
+{
+  "runId": "01A0FIXTURELOGINNAVIGATE000000",
+  "version": "1.0",
+  "steps": [
+    {
+      "stepId": "01A0STEPLOGINNAVIGATE0000001",
+      "mode": "navigation",
+      "action": "navigate",
+      "metadata": {
+        "url": "http://127.0.0.1:8787/login.html"
+      }
+    },
+    {
+      "stepId": "01A0STEPLOGINNAVIGATE0000002",
+      "mode": "action",
+      "action": "fill",
+      "target": {
+        "primarySelector": "#email",
+        "fallbackSelectors": [
+          "input[name='email']"
+        ],
+        "confidenceScore": 0.95,
+        "reasoningHint": "stable id and input name",
+        "frameContext": []
+      },
+      "metadata": {
+        "text": "fixture@example.test"
+      }
+    },
+    {
+      "stepId": "01A0STEPLOGINNAVIGATE0000003",
+      "mode": "action",
+      "action": "fill",
+      "target": {
+        "primarySelector": "#password",
+        "fallbackSelectors": [
+          "input[name='password']"
+        ],
+        "confidenceScore": 0.94,
+        "reasoningHint": "password field id",
+        "frameContext": []
+      },
+      "metadata": {
+        "text": "fixture-password"
+      }
+    },
+    {
+      "stepId": "01A0STEPLOGINNAVIGATE0000004",
+      "mode": "action",
+      "action": "click",
+      "target": {
+        "primarySelector": "[data-testid='submit-login']",
+        "fallbackSelectors": [
+          "#submit-login"
+        ],
+        "confidenceScore": 0.99,
+        "reasoningHint": "stable test id",
+        "frameContext": []
+      }
+    },
+    {
+      "stepId": "01A0STEPLOGINNAVIGATE0000005",
+      "mode": "assertion",
+      "action": "assert_visible",
+      "target": {
+        "primarySelector": "[data-testid='dashboard-title']",
+        "fallbackSelectors": [
+          "h1"
+        ],
+        "confidenceScore": 0.9,
+        "reasoningHint": "dashboard title anchor",
+        "frameContext": []
+      }
+    }
+  ],
+  "edges": [
+    {
+      "fromStepId": "01A0STEPLOGINNAVIGATE0000001",
+      "toStepId": "01A0STEPLOGINNAVIGATE0000002"
+    },
+    {
+      "fromStepId": "01A0STEPLOGINNAVIGATE0000002",
+      "toStepId": "01A0STEPLOGINNAVIGATE0000003"
+    },
+    {
+      "fromStepId": "01A0STEPLOGINNAVIGATE0000003",
+      "toStepId": "01A0STEPLOGINNAVIGATE0000004"
+    },
+    {
+      "fromStepId": "01A0STEPLOGINNAVIGATE0000004",
+      "toStepId": "01A0STEPLOGINNAVIGATE0000005"
+    }
+  ]
+}

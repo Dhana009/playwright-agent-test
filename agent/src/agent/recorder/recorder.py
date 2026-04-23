@@ -295,8 +295,8 @@ class StepGraphRecorder:
         page.on("framenavigated", self._on_frame_navigated)
         page.on("console", self._on_console)
 
-        await page.goto(self._url, wait_until="domcontentloaded")
-        await page.wait_for_function("window.__agentRecorderInstalled === true")
+        await page.goto(self._url, wait_until="domcontentloaded", timeout=15_000)
+        await page.wait_for_function("window.__agentRecorderInstalled === true", timeout=15_000)
         self._poll_task = asyncio.create_task(self._poll_inpage_queue(), name=f"recorder-poll-{self._run_id}")
 
         self._logger.info(
@@ -361,11 +361,24 @@ class StepGraphRecorder:
         page = self._page
         if page is None:
             return
-        try:
-            entries = await page.evaluate("window.__agentRecorderDrain ? window.__agentRecorderDrain() : []")
-        except Exception as exc:  # noqa: BLE001
-            self._logger.warning("recorder_queue_flush_failed", run_id=self._run_id, error=str(exc))
-            return
+        for attempt in range(2):
+            try:
+                entries = await asyncio.wait_for(
+                    page.evaluate("window.__agentRecorderDrain ? window.__agentRecorderDrain() : []"),
+                    timeout=2.0,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                message = str(exc)
+                if attempt == 0 and "Execution context was destroyed" in message:
+                    await asyncio.sleep(0.1)
+                    continue
+                self._logger.warning(
+                    "recorder_queue_flush_failed",
+                    run_id=self._run_id,
+                    error=message,
+                )
+                return
 
         if not isinstance(entries, list):
             return
@@ -495,6 +508,13 @@ class StepGraphRecorder:
 
         if capture.event_type == "input":
             value = capture.value or ""
+            if self._is_sensitive_input(capture.target):
+                return {
+                    "action": "fill",
+                    "semantic_intent": "field_input_redacted",
+                    "confidence": 0.9,
+                    "metadata": {"valueRef": "redacted"},
+                }
             return {
                 "action": "fill",
                 "semantic_intent": "field_input",
@@ -526,6 +546,23 @@ class StepGraphRecorder:
             }
 
         return None
+
+    def _is_sensitive_input(self, target: CapturedTarget) -> bool:
+        input_type = (target.input_type or "").lower().strip()
+        if input_type == "password":
+            return True
+        combined = " ".join(
+            token
+            for token in [
+                target.id or "",
+                target.name or "",
+                target.placeholder or "",
+                target.aria_label or "",
+                target.target_semantic_key or "",
+            ]
+            if token
+        ).lower()
+        return "password" in combined or "passcode" in combined
 
     def _looks_like_search_target(self, target: CapturedTarget) -> bool:
         input_type = (target.input_type or "").lower()

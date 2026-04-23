@@ -46,6 +46,10 @@ def generate_browser_session_id() -> str:
     return f"browser_session_{_new_ulid()}"
 
 
+def generate_human_session_id() -> str:
+    return f"human_session_{_new_ulid()}"
+
+
 def generate_browser_context_id() -> str:
     return f"context_{_new_ulid()}"
 

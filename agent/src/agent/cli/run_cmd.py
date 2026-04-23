@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 import typer
+from dotenv import load_dotenv
 
 from agent.cache.engine import CacheEngine
 from agent.core.config import Settings
@@ -15,10 +16,12 @@ from agent.execution.snapshot import SnapshotEngine
 from agent.execution.tools import ToolRuntime
 from agent.policy.approval import ApprovalClassifier, HardApprovalRequest
 from agent.policy.audit import AuditLogger
-from agent.policy.restrictions import RestrictionsPolicy
+from agent.policy.restrictions import RestrictionViolation, RestrictionsPolicy
+from agent.execution.events import EventType, RunResumedEvent
 from agent.stepgraph.models import StepGraph
 from agent.storage.files import get_run_layout
 from agent.storage.repos.checkpoints import CheckpointRepository
+from agent.storage.repos.events import EventRepository
 from agent.storage.repos.step_graph import StepGraphRepository
 
 
@@ -35,12 +38,38 @@ def _is_pause_requested(run_id: str) -> bool:
     return _pause_marker_path(run_id).exists()
 
 
+def _load_optional_env_test() -> None:
+    """So replay can resolve metadata.valueRef='redacted' via FLOWHUB_PASSWORD, etc."""
+    candidate = Path(__file__).resolve().parents[3] / ".env.test"
+    if candidate.is_file():
+        load_dotenv(candidate, override=False)
+
+
+def _derive_initial_url_for_blank_page(graph: StepGraph) -> str | None:
+    """
+    `agent run` opens about:blank. Recordings often start with clicks whose
+    `metadata.frameUrl` is the real page, without an explicit navigate step.
+    """
+    if not graph.steps:
+        return None
+    if graph.steps[0].action.strip().lower() == "navigate":
+        return None
+    for step in graph.steps:
+        meta = step.metadata
+        for key in ("frameUrl", "url"):
+            val = meta.get(key)
+            if isinstance(val, str) and val.strip().startswith(("http://", "https://")):
+                return val.strip()
+    return None
+
+
 async def _run_graph(
     graph: StepGraph,
     *,
     start_step_id: str | None = None,
     auto_approve_hard: bool = False,
 ) -> None:
+    _load_optional_env_test()
     run_id = graph.run_id
     pause_marker = _pause_marker_path(run_id)
     pause_marker.unlink(missing_ok=True)
@@ -80,6 +109,26 @@ async def _run_graph(
             event_emitter=_emit_tool_audit,
         )
 
+        if start_step_id is None:
+            initial_url = _derive_initial_url_for_blank_page(graph)
+            if initial_url is not None:
+                try:
+                    restrictions_policy.enforce_navigation_url(initial_url)
+                except RestrictionViolation as exc:
+                    typer.echo(f"Initial navigation blocked by policy: {exc}", err=True)
+                    raise typer.Exit(code=1) from exc
+                LOGGER.info(
+                    "run_cli_initial_navigation",
+                    run_id=run_id,
+                    url=initial_url,
+                )
+                await runtime.navigate(
+                    tab_id=tab_id,
+                    url=initial_url,
+                    wait_until="load",
+                    timeout_ms=60_000.0,
+                )
+
         def _hard_approval_prompt(request: HardApprovalRequest) -> bool:
             if auto_approve_hard:
                 typer.echo(
@@ -105,16 +154,60 @@ async def _run_graph(
             audit_logger=audit_logger,
         )
 
-        await runner.run(graph, start_step_id=start_step_id, pause_requested=lambda: _is_pause_requested(run_id))
+        event_repo = EventRepository(sqlite_path=settings.storage.sqlite_path)
 
-        # best-effort checkpoint on clean completion (or pause) at "current step"
-        last_step_id = graph.steps[-1].step_id if graph.steps else graph.run_id
-        await writer.checkpoint_now(
-            current_step_id=last_step_id,
-            browser_session_id=session.browser_session_id,
-            tab_id=tab_id,
-            frame_path=[],
-        )
+        if start_step_id is not None:
+            await writer.emit_event(
+                RunResumedEvent(
+                    run_id=run_id,
+                    actor="cli",
+                    type=EventType.RUN_RESUMED,
+                    payload={"start_step_id": start_step_id},
+                )
+            )
+
+        try:
+            await runner.run(
+                graph,
+                start_step_id=start_step_id,
+                pause_requested=lambda: _is_pause_requested(run_id),
+            )
+        except Exception:
+            events = await event_repo.load_for_run(run_id, limit=5000)
+            failed_step_id: str | None = None
+            for ev in reversed(events):
+                if ev.type == EventType.STEP_FAILED and ev.step_id:
+                    failed_step_id = ev.step_id
+                    break
+            if failed_step_id is not None:
+                await writer.checkpoint_now(
+                    current_step_id=failed_step_id,
+                    browser_session_id=session.browser_session_id,
+                    tab_id=tab_id,
+                    frame_path=[],
+                )
+            raise
+
+        events = await event_repo.load_for_run(run_id, limit=5000)
+        last = events[-1] if events else None
+        if last is not None and last.type == EventType.RUN_PAUSED:
+            next_step_id = (last.payload or {}).get("next_step_id")
+            if not isinstance(next_step_id, str) or not next_step_id.strip():
+                raise RuntimeError("run_paused event missing payload.next_step_id")
+            await writer.checkpoint_now(
+                current_step_id=next_step_id,
+                browser_session_id=session.browser_session_id,
+                tab_id=tab_id,
+                frame_path=[],
+            )
+        else:
+            last_step_id = graph.steps[-1].step_id if graph.steps else graph.run_id
+            await writer.checkpoint_now(
+                current_step_id=last_step_id,
+                browser_session_id=session.browser_session_id,
+                tab_id=tab_id,
+                frame_path=[],
+            )
     finally:
         await session.stop()
 

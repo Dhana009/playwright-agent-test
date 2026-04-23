@@ -7,9 +7,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+from dotenv import load_dotenv
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from _runner import SmokeRunner  # noqa: E402
 from agent.core.config import Settings  # noqa: E402
 from agent.core.ids import generate_run_id  # noqa: E402
 from agent.core.mode import ModeController, RuntimeBinding, RuntimeMode  # noqa: E402
@@ -21,11 +26,16 @@ from agent.storage.repos.telemetry import TelemetryRepository  # noqa: E402
 from agent.telemetry.models import CallPurpose, ContextTier  # noqa: E402
 
 
-@dataclass(slots=True)
+@dataclass
 class SmokeResult:
     provider: str
     ok: bool
     detail: str
+
+
+def _load_env_files() -> None:
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
+    load_dotenv(PROJECT_ROOT / ".env.test", override=False)
 
 
 async def _run_provider_smoke(
@@ -87,7 +97,9 @@ async def _run_provider_smoke(
     )
 
 
-async def main() -> None:
+async def main() -> int:
+    _load_env_files()
+
     parser = argparse.ArgumentParser(description="Phase 9 smoke: provider abstraction adapters.")
     parser.add_argument(
         "--prompt",
@@ -107,10 +119,31 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    settings = Settings.load()
-    _run_context_builder_smoke(model=settings.llm.model)
-    await _run_mode_switch_smoke(settings=settings)
-    await _run_orchestrator_smoke()
+    runner = SmokeRunner(phase="T8", run_id=generate_run_id(), default_task="T8.1")
+
+    settings: Settings | None = None
+    with runner.case("settings_load", task="T8.1", feature="provider_adapters", error_class="config"):
+        settings = Settings.load()
+
+    if settings is None:
+        return runner.finalize()
+
+    with runner.case("context_builder", task="T8.2", feature="context_escalation"):
+        context_details = _run_context_builder_smoke(model=settings.llm.model)
+        runner.check(len(context_details) == 4, f"Expected 4 escalation tiers, got {len(context_details)}")
+        for detail in context_details:
+            print(detail)
+
+    with runner.case("mode_switch", task="T8.3", feature="mode_switch"):
+        mode_result = await _run_mode_switch_smoke(settings=settings)
+        runner.check(mode_result.ok, mode_result.detail)
+        print(mode_result.detail)
+
+    with runner.case("orchestrator", task="T8.4", feature="orchestrator"):
+        orchestrator_result = await _run_orchestrator_smoke()
+        runner.check(orchestrator_result.ok, orchestrator_result.detail)
+        print(orchestrator_result.detail)
+
     telemetry_repository = TelemetryRepository(sqlite_path=settings.storage.sqlite_path)
     openai_compatible_base = (
         args.openai_compatible_base
@@ -119,24 +152,40 @@ async def main() -> None:
         or os.getenv("LM_STUDIO_API_BASE")
     )
 
-    runs = [
-        _run_provider_smoke(
-            settings=settings,
-            provider_name="openai",
-            prompt=args.prompt,
-            timeout_seconds=args.timeout_seconds,
-            telemetry_repository=telemetry_repository,
-        ),
-        _run_provider_smoke(
-            settings=settings,
-            provider_name="anthropic",
-            prompt=args.prompt,
-            timeout_seconds=args.timeout_seconds,
-            telemetry_repository=telemetry_repository,
-        ),
+    provider_checks = [
     ]
+    skipped_provider_reasons: dict[str, str] = {}
+
+    if os.getenv("OPENAI_API_KEY"):
+        provider_checks.append(
+            _run_provider_smoke(
+                settings=settings,
+                provider_name="openai",
+                prompt=args.prompt,
+                timeout_seconds=args.timeout_seconds,
+                telemetry_repository=telemetry_repository,
+            )
+        )
+    else:
+        skipped_provider_reasons["openai"] = "OPENAI_API_KEY is not set"
+
+    if os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"):
+        provider_checks.append(
+            _run_provider_smoke(
+                settings=settings,
+                provider_name="anthropic",
+                prompt=args.prompt,
+                timeout_seconds=args.timeout_seconds,
+                telemetry_repository=telemetry_repository,
+            )
+        )
+    else:
+        skipped_provider_reasons["anthropic"] = (
+            "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN is not set"
+        )
+
     if openai_compatible_base:
-        runs.append(
+        provider_checks.append(
             _run_provider_smoke(
                 settings=settings,
                 provider_name="openai_compatible",
@@ -147,21 +196,50 @@ async def main() -> None:
             )
         )
     else:
-        print("SKIP  openai_compatible  missing base URL (pass --openai-compatible-base)")
+        skipped_provider_reasons["openai_compatible"] = (
+            "OPENAI_COMPATIBLE_API_BASE/LM_STUDIO_API_BASE is not set"
+        )
 
-    results = await asyncio.gather(*runs)
-    success_count = 0
-    for result in results:
-        status = "PASS" if result.ok else "FAIL"
-        print(f"{status:<5} {result.provider:<18} {result.detail}")
-        if result.ok:
-            success_count += 1
+    if not provider_checks:
+        with runner.case(
+            "provider_configuration",
+            task="T8.1",
+            feature="provider_adapters",
+            error_class="config",
+        ):
+            raise RuntimeError(
+                "No provider credentials are configured. "
+                "Set at least one provider auth value in .env/.env.test."
+            )
 
-    print()
-    print(f"Completed {len(results)} adapter checks, {success_count} succeeded.")
+    for provider_name, reason in skipped_provider_reasons.items():
+        with runner.case(
+            f"provider_{provider_name}_skipped",
+            task="T8.1",
+            feature="provider_adapters",
+            error_class="config",
+        ):
+            print(f"skipped: {reason}")
+
+    if provider_checks:
+        provider_results = await asyncio.gather(*provider_checks)
+    else:
+        provider_results = []
+
+    for provider_result in provider_results:
+        with runner.case(
+            f"provider_{provider_result.provider}",
+            task="T8.1",
+            feature="provider_adapters",
+            error_class="runtime",
+        ):
+            runner.check(provider_result.ok, provider_result.detail)
+            print(provider_result.detail)
+
+    return runner.finalize()
 
 
-def _run_context_builder_smoke(*, model: str) -> None:
+def _run_context_builder_smoke(*, model: str) -> list[str]:
     builder = StagedContextBuilder(model=model, default_output_tokens=256)
     sequence = builder.build_escalation_sequence(
         target_tier=ContextTier.TIER_3,
@@ -191,13 +269,15 @@ def _run_context_builder_smoke(*, model: str) -> None:
         system_prompt="You are a Playwright execution planner.",
         task_prompt="Decide next safe action.",
     )
+    details: list[str] = []
     for result in sequence:
-        print(
-            "PASS  context_builder     "
-            f"tier={result.tier} sections={','.join(result.included_sections)} "
+        details.append(
+            "tier="
+            f"{result.tier} sections={','.join(result.included_sections)} "
             f"input_tokens={result.preflight_input_tokens} "
             f"output_tokens={result.preflight_output_tokens}"
         )
+    return details
 
 
 class _MockOrchestratorProvider(LLMProvider):
@@ -268,7 +348,7 @@ class _MockOrchestratorProvider(LLMProvider):
         )
 
 
-async def _run_orchestrator_smoke() -> None:
+async def _run_orchestrator_smoke() -> SmokeResult:
     provider = _MockOrchestratorProvider()
     orchestrator = LLMOrchestrator(model=provider.default_model)
 
@@ -293,16 +373,17 @@ async def _run_orchestrator_smoke() -> None:
         initial_tier=ContextTier.TIER_0,
     )
 
-    status = "PASS" if result.success else "FAIL"
-    print(
-        f"{status:<5} orchestrator         "
-        f"stop_reason={result.stop_reason} "
-        f"rounds={result.rounds_executed} "
-        f"final_tier={result.final_tier}"
+    return SmokeResult(
+        provider="orchestrator",
+        ok=result.success,
+        detail=(
+            f"stop_reason={result.stop_reason} rounds={result.rounds_executed} "
+            f"final_tier={result.final_tier}"
+        ),
     )
 
 
-async def _run_mode_switch_smoke(*, settings: Settings) -> None:
+async def _run_mode_switch_smoke(*, settings: Settings) -> SmokeResult:
     initial_mode = RuntimeMode(settings.mode)
     target_mode = RuntimeMode.HYBRID if initial_mode != RuntimeMode.HYBRID else RuntimeMode.MANUAL
     controller = ModeController(initial_mode=initial_mode)
@@ -320,13 +401,13 @@ async def _run_mode_switch_smoke(*, settings: Settings) -> None:
         sqlite_path=settings.storage.sqlite_path,
     )
 
-    status = "PASS" if (result.changed and not result.runtime_state_reset and result.event_id) else "FAIL"
-    print(
-        f"{status:<5} mode_switch          "
+    ok = bool(result.changed and not result.runtime_state_reset and result.event_id)
+    detail = (
         f"previous={result.previous_mode} active={result.active_mode} "
         f"runtime_state_reset={result.runtime_state_reset} event_id={result.event_id}"
     )
+    return SmokeResult(provider="mode_switch", ok=ok, detail=detail)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

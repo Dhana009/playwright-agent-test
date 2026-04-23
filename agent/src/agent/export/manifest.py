@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent.cache.models import CacheDecision, ContextFingerprint
 from agent.core.logging import get_logger
-from agent.stepgraph.models import LocatorBundle, StepGraph
+from agent.stepgraph.models import LocatorBundle, Step, StepGraph
 from agent.storage.files import get_run_layout
 from agent.storage.repos._common import loads_json, open_connection
 from agent.storage.repos.cache import CacheRepository
@@ -83,6 +83,37 @@ class PortableManifestPersistence:
     sqlite_path: str | Path | None = None
 
 
+MANIFEST_REDACTED_FILL_PLACEHOLDER = "[REDACTED]"
+
+
+def sanitize_stepgraph_for_manifest(step_graph: StepGraph) -> StepGraph:
+    """Redact `metadata.text` on fill steps that target password inputs (selectors / hints)."""
+    new_steps: list[Step] = []
+    for step in step_graph.steps:
+        if step.action.strip().lower() != "fill":
+            new_steps.append(step)
+            continue
+        if not _step_fill_targets_password_field(step):
+            new_steps.append(step)
+            continue
+        meta = dict(step.metadata)
+        if "text" in meta:
+            meta["text"] = MANIFEST_REDACTED_FILL_PLACEHOLDER
+        new_steps.append(step.model_copy(update={"metadata": meta}))
+    return step_graph.model_copy(update={"steps": new_steps})
+
+
+def _step_fill_targets_password_field(step: Step) -> bool:
+    blob_parts: list[str] = []
+    if step.target is not None:
+        blob_parts.append(step.target.primary_selector)
+        blob_parts.extend(step.target.fallback_selectors)
+        if step.target.reasoning_hint:
+            blob_parts.append(step.target.reasoning_hint)
+    blob = " ".join(blob_parts).lower()
+    return "password" in blob
+
+
 class PortableManifestWriter:
     def __init__(
         self,
@@ -111,9 +142,10 @@ class PortableManifestWriter:
         )
 
     async def build_manifest(self, *, run_id: str) -> PortableManifest:
-        step_graph = await self._p.step_graph_repo.load(run_id)
-        if step_graph is None:
+        raw_graph = await self._p.step_graph_repo.load(run_id)
+        if raw_graph is None:
             raise ValueError(f"Step graph not found for run_id={run_id}")
+        step_graph = sanitize_stepgraph_for_manifest(raw_graph)
 
         cache_records = await self._p.cache_repo.load_for_run(run_id=run_id, limit=10_000)
         latest_by_step: dict[str, ManifestFingerprintEntry] = {}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fixture Upload</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Upload</h1>
+    <input id="file-input" type="file" />
+    <p id="file-result" role="status"></p>
+    <script>
+      const input = document.querySelector("#file-input");
+      const result = document.querySelector("#file-result");
+      input.addEventListener("change", () => {
+        const count = input.files ? input.files.length : 0;
+        const firstName = count > 0 ? input.files[0].name : "none";
+        result.textContent = `files=${count} first=${firstName}`;
+      });
+    </script>
+  </body>
+</html>

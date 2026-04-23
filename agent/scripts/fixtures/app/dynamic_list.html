@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fixture Dynamic List</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; }
+      ul { padding-left: 1.25rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Dynamic List</h1>
+    <button id="swap-subtree" type="button">Swap Subtree</button>
+    <button id="add-item" type="button">Add Item</button>
+    <section id="list-scope" data-version="v1">
+      <ul id="items">
+        <li>Alpha</li>
+        <li>Beta</li>
+      </ul>
+    </section>
+    <script>
+      const scope = document.querySelector("#list-scope");
+      const items = document.querySelector("#items");
+      let nextCounter = 3;
+
+      document.querySelector("#add-item").addEventListener("click", () => {
+        const li = document.createElement("li");
+        li.textContent = `Item ${nextCounter++}`;
+        items.appendChild(li);
+      });
+
+      document.querySelector("#swap-subtree").addEventListener("click", () => {
+        const nextVersion = scope.dataset.version === "v1" ? "v2" : "v1";
+        scope.dataset.version = nextVersion;
+        scope.innerHTML =
+          nextVersion === "v2"
+            ? '<ol id="items"><li>Gamma</li><li>Delta</li></ol>'
+            : '<ul id="items"><li>Alpha</li><li>Beta</li></ul>';
+      });
+    </script>
+  </body>
+</html>

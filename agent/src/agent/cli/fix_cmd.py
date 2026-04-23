@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import typer
 
+from agent.core.config import Settings
 from agent.core.logging import get_logger
 from agent.execution.checkpoint_writer import CheckpointWriter
 from agent.execution.events import EventType, InterventionRecordedEvent
@@ -58,8 +60,14 @@ async def _apply_fix_and_resume(
     step_id: str,
     fix_type: Literal["force-fix", "manual-fix"],
     selector: str | None,
+    sqlite_path: str | Path | None = None,
+    runs_root: str | Path | None = None,
 ) -> None:
-    step_graph_repo = StepGraphRepository()
+    resolved_sqlite = sqlite_path
+    if resolved_sqlite is None:
+        resolved_sqlite = Settings.load().storage.sqlite_path
+
+    step_graph_repo = StepGraphRepository(sqlite_path=resolved_sqlite)
     graph = await step_graph_repo.load(run_id)
     if graph is None:
         raise typer.BadParameter(f"No step graph found for run_id '{run_id}'.")
@@ -80,7 +88,11 @@ async def _apply_fix_and_resume(
 
     await step_graph_repo.save(graph)
 
-    writer = CheckpointWriter.for_run(run_id=run_id)
+    writer = CheckpointWriter.for_run(
+        run_id=run_id,
+        sqlite_path=resolved_sqlite,
+        runs_root=runs_root,
+    )
 
     intervention_event = InterventionRecordedEvent(
         run_id=run_id,
@@ -94,13 +106,15 @@ async def _apply_fix_and_resume(
         },
     )
     await writer.emit_event(intervention_event)
-    audit_logger = AuditLogger.for_run(run_id=run_id)
+    audit_logger = AuditLogger.for_run(run_id=run_id, runs_root=runs_root)
     audit_logger.record_intervention(intervention_event)
 
-    # Resume execution from the fixed step using the same runner wiring as the CLI run command.
-    # Browser session ownership is handled by the caller (Phase 5.3 starts a new BrowserSession).
-    raise typer.BadParameter(
-        "Fix recorded. Resume via `agent resume <run_id>` (Phase 5.3) to continue from checkpoint."
+    LOGGER.info(
+        "fix_recorded",
+        run_id=run_id,
+        step_id=step_id,
+        fix_type=fix_type,
+        sqlite_path=str(resolved_sqlite),
     )
 
 
@@ -121,7 +135,7 @@ def fix(
     # typer commands are sync; use asyncio via a minimal loop runner
     async def _impl() -> None:
         if step_id is None:
-            repo = EventRepository()
+            repo = EventRepository(sqlite_path=Settings.load().storage.sqlite_path)
             events = await repo.load_for_run(run_id, limit=500)
             event_dicts = [e.model_dump(mode="json") for e in events]
             latest = _pick_latest_failed_step(event_dicts)
@@ -147,4 +161,5 @@ def fix(
     import asyncio
 
     asyncio.run(_impl())
+    typer.echo(f"Fix recorded for run '{run_id}'. Resume via: agent resume {run_id}")
 
