@@ -552,6 +552,7 @@ class _PanelState:
         fallbacks = step.target.fallback_selectors if step.target else []
         descriptor = step.metadata.get("descriptor") or {}
         params = payload.get("params") or step.metadata.get("params") or {}
+        user_hint = (payload.get("userHint") or "").strip() or None
 
         async def on_progress(
             stage: int,
@@ -578,6 +579,7 @@ class _PanelState:
             params=params,
             llm_provider=self.llm_provider if self.llm_enabled else None,
             on_progress=on_progress,
+            user_hint=user_hint,
         )
 
         if result.repaired:

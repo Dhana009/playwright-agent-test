@@ -63,6 +63,7 @@ async def run_force_fix_cascade(
     params: dict[str, Any] | None = None,
     llm_provider: Any | None = None,
     on_progress: ProgressCallback | None = None,
+    user_hint: str | None = None,
 ) -> ForceFixResult:
     """
     4-stage force-fix cascade.
@@ -146,6 +147,7 @@ async def run_force_fix_cascade(
             dom_snippet=dom_snippet,
             target_descriptor=target_descriptor,
             params=params or {},
+            user_hint=user_hint,
         )
 
         candidates = llm_result.get("candidates") or []
@@ -185,13 +187,16 @@ async def run_force_fix_cascade(
 
 
 async def _probe_selector(page: Page, selector: str) -> bool:
-    """Return True if the selector finds at least one visible, actionable element."""
+    """Return True if the selector finds exactly one visible element (unique match)."""
     try:
         loc = page.locator(selector)
         count = await loc.count()
         if count == 0:
             return False
-        # Check the first match — visible is enough
+        if count > 1:
+            # Non-unique selector — skip it, it could click the wrong element
+            logger.debug("probe_not_unique selector=%r count=%d", selector, count)
+            return False
         return await loc.first.is_visible()
     except Exception:
         return False
@@ -256,6 +261,19 @@ def _generate_alternates(descriptor: dict[str, Any]) -> list[str]:
         if safe_id:
             alternates.append(f'#{safe_id}')
             alternates.append(f'[id="{el_id}"]')
+
+    # 8. XPath — last resort before LLM
+    if text and len(text) > 1:
+        safe_text = text[:60].replace("'", "\\'")
+        if tag:
+            alternates.append(f"//{tag}[normalize-space(.)='{safe_text}']")
+            alternates.append(f"//{tag}[contains(.,'{safe_text[:30]}')]")
+        else:
+            alternates.append(f"//*[normalize-space(.)='{safe_text}']")
+    if aria_label:
+        safe_aria = aria_label.replace("'", "\\'")
+        xp_tag = tag or "*"
+        alternates.append(f"//{xp_tag}[@aria-label='{safe_aria}']")
 
     return alternates
 
@@ -370,6 +388,7 @@ async def _ask_llm_repair(
     dom_snippet: str,
     target_descriptor: dict[str, Any] | None,
     params: dict[str, Any],
+    user_hint: str | None = None,
 ) -> dict[str, Any]:
     """
     Ask the LLM to repair a failing locator.
@@ -393,12 +412,13 @@ async def _ask_llm_repair(
             param_block = f"\nAction params: {json.dumps(relevant)}"
 
     tried_block = "\n".join(f"  - {s}" for s in already_tried if s) or "  (none)"
+    hint_block = f"\n## User context\n{user_hint.strip()}\n" if user_hint and user_hint.strip() else ""
 
     prompt = f"""You are a senior Playwright test automation engineer. A recorded browser step has broken because its locator no longer finds the element.
 
 ## What failed
 Action: {action}{param_block}
-Failed selector: {failed_locator!r}
+Failed selector: {failed_locator!r}{hint_block}
 
 ## Target element (recorded properties)
 {desc_block}
