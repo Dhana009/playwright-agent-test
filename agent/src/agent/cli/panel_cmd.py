@@ -734,6 +734,25 @@ class _PanelState:
                     )
                     object.__setattr__(s, "target", bundle)
                 break
+        saved_path = self._save_step_graph()
+        if saved_path:
+            logger.info("llm_repair_saved step_id=%s locator=%r path=%s", step_id, locator, saved_path)
+            await self.bridge.send({
+                "type": "repair_applied",
+                "payload": {"stepId": step_id, "locator": locator, "savedPath": str(saved_path)},
+            })
+
+    def _save_step_graph(self) -> "Path | None":
+        """Persist the current step graph to runs/{run_id}/stepgraph.json. Returns path on success."""
+        try:
+            from agent.storage.files import get_run_layout
+            layout = get_run_layout(self.run_id)
+            path = layout.run_dir / "stepgraph.json"
+            path.write_text(self.step_graph.model_dump_json(indent=2, by_alias=True), encoding="utf-8")
+            return path
+        except Exception as exc:
+            logger.error("save_step_graph_failed error=%s", str(exc))
+            return None
 
     # ── LLM Assist ───────────────────────────────────────────────────────
 
@@ -786,6 +805,29 @@ class _PanelState:
                 meta_params = dict(meta_params)
                 meta_params["file_paths"] = fp
 
+        # If still no file path for an upload step, try to extract one from the issue text.
+        # Users often paste the path directly in the description box.
+        if step.action == "upload" and not meta_params.get("file_paths") and not meta_params.get("path") and not meta_params.get("text"):
+            extracted = _extract_file_path_from_text(issue)
+            if extracted:
+                meta_params = dict(meta_params)
+                meta_params["file_paths"] = extracted
+                logger.info("llm_assist_path_from_issue step_id=%s path=%r", step_id, extracted)
+
+        # Hard stop: upload step with no file path — LLM cannot help, tell the user immediately.
+        if step.action == "upload" and not meta_params.get("file_paths") and not meta_params.get("path") and not meta_params.get("text"):
+            await self.bridge.broadcast_llm_assist_result(
+                step_id=step_id,
+                iteration=max((it.get("iteration", 0) for it in iteration_history), default=0) + 1,
+                status="error",
+                explanation=(
+                    "No file path is configured for this upload step. "
+                    "Paste the absolute file path into the description box (e.g. /Users/you/file.pdf) "
+                    "and click Ask LLM again."
+                ),
+            )
+            return
+
         step_dict = {
             "action": step.action,
             "locator": step.metadata.get("locator") or (step.target.primary_selector if step.target else ""),
@@ -814,6 +856,9 @@ class _PanelState:
                         round_num, diagnosis[:80], len(attempts))
 
             # ── Phase 2: Try each attempt in order; stop at first success ─────
+            # Use the original locator as the DOM snapshot anchor for before/after diff
+            dom_anchor = step_dict["locator"] or "body"
+
             await self._suspend_auto_capture()
             winning_attempt: dict[str, Any] | None = None
             try:
@@ -848,15 +893,19 @@ class _PanelState:
                         tool_runtime=self.tool_runtime,
                         tab_id=self.tab_id,
                         timeout_ms=20_000,
+                        dom_snapshot_selector=dom_anchor,
                     )
 
                     success = exec_result.get("success", False)
                     exec_error = exec_result.get("error") or ""
                     exec_detail = exec_result.get("exec_detail") or ""
                     upload_method = exec_result.get("upload_method") or ""
+                    dom_diff = exec_result.get("domDiff") or {}
 
-                    logger.info("llm_assist_attempt_result round=%d attempt=%d success=%s error=%r",
-                                round_num, attempt_idx + 1, success, exec_error[:80])
+                    logger.info(
+                        "llm_assist_attempt_result round=%d attempt=%d success=%s dom_changed=%s error=%r",
+                        round_num, attempt_idx + 1, success, dom_diff.get("changed"), exec_error[:80],
+                    )
 
                     self._append_repair_history(step_id, {
                         "kind": "llm_assist",
@@ -869,6 +918,7 @@ class _PanelState:
                         "error": exec_error,
                         "exec_detail": exec_detail,
                         "upload_method": upload_method,
+                        "domDiff": dom_diff,
                     })
 
                     exec_status = "exec_passed" if success else "exec_failed"
@@ -883,6 +933,7 @@ class _PanelState:
                         exec_error=exec_error,
                         exec_detail=exec_detail,
                         upload_method=upload_method,
+                        dom_diff=dom_diff,
                     )
 
                     if success:
@@ -1160,13 +1211,19 @@ class _PanelState:
         if self._record_poll_task:
             self._record_poll_task.cancel()
             self._record_poll_task = None
-        # Flush any buffered fill events before stopping
         await self._flush_pending_fills()
         try:
             await self.page.evaluate("window.__agentRecorderArmed = false;")
         except Exception:
             pass
         logger.info("auto_recording_stopped")
+        saved_path = self._save_step_graph()
+        if saved_path:
+            logger.info("recording_saved path=%s steps=%d", saved_path, len(self.step_graph.steps))
+            await self.bridge.send({
+                "type": "recording_saved",
+                "payload": {"path": str(saved_path), "stepCount": len(self.step_graph.steps)},
+            })
 
     async def _auto_record_poll(self) -> None:
         """Poll the in-page capture queue and convert events to steps."""
@@ -1559,13 +1616,20 @@ def _build_step(
             fallbackSelectors=[],
             confidenceScore=0.9,
         )
+    meta: dict[str, Any] = {"tabId": tab_id, "locator": locator, "params": params}
+    # For upload steps, also store file path under "filePaths" (recorder convention)
+    # so both lookup paths (metadata["filePaths"] and metadata["params"]["file_paths"]) work.
+    if action in ("upload", "upload_file"):
+        fp = params.get("file_paths") or params.get("path") or params.get("text") or ""
+        if fp:
+            meta["filePaths"] = fp
     return Step(
         mode=mode,
         action=action.replace("-", "_"),
         target=target,
         timeout_policy=TimeoutPolicy(timeoutMs=15_000),
         recovery_policy=RecoveryPolicy(maxRetries=0),
-        metadata={"tabId": tab_id, "locator": locator, "params": params},
+        metadata=meta,
     )
 
 
@@ -1626,6 +1690,28 @@ def _step_from_dict(raw: dict[str, Any], tab_id: str) -> Step:
     if isinstance(step_id, str) and step_id.strip():
         step = step.model_copy(update={"step_id": step_id})
     return step
+
+
+def _extract_file_path_from_text(text: str) -> str | None:
+    """
+    Extract the first absolute file path from free-form text.
+    Handles URL-encoded paths (spaces as %20) and strips trailing punctuation.
+    """
+    import re
+    from urllib.parse import unquote
+
+    if not text:
+        return None
+    # Match Unix absolute path (possibly URL-encoded) — greedy up to whitespace or comma
+    pattern = r'(/(?:[^\s,]+))'
+    for m in re.finditer(pattern, text):
+        candidate = m.group(1).rstrip(".,;:'\")>")
+        # Decode %20 etc.
+        decoded = unquote(candidate)
+        # Must look like a file (has an extension or is long enough to be real)
+        if len(decoded) > 4 and ('.' in decoded.split('/')[-1] or len(decoded.split('/')) > 3):
+            return decoded
+    return None
 
 
 def _try_load_llm_provider() -> Any | None:

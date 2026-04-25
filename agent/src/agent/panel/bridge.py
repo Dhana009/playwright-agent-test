@@ -511,6 +511,7 @@ class PanelBridge:
         exec_error: str | None = None,
         exec_detail: str | None = None,
         upload_method: str | None = None,
+        dom_diff: dict | None = None,
     ) -> None:
         await self.send({
             "type": MSG_LLM_ASSIST_RESULT,
@@ -526,6 +527,7 @@ class PanelBridge:
                 "execError": exec_error,
                 "execDetail": exec_detail,
                 "uploadMethod": upload_method,
+                "domDiff": dom_diff,
             },
         })
 

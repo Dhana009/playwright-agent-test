@@ -2238,6 +2238,10 @@ $('action-select').addEventListener('change', () => {
 
 function updateParamInputs() {
   const action = $('action-select').value;
+  // Preserve any value the user already typed before we replace the input
+  const existingInput = document.getElementById('action-param');
+  const existingValue = existingInput ? existingInput.value : '';
+
   const textActions = ['fill','type','assert-text','assert-title','assert-url','assert-value','navigate','press'];
   const numActions = ['wait-timeout'];
   const stateActions = ['wait-for'];
@@ -2254,17 +2258,27 @@ function updateParamInputs() {
   } else if (dialogActions.includes(action)) {
     html = `<div style="display:flex;gap:10px;font-size:11px;color:var(--fg-2);align-items:center;"><label><input type="radio" name="dlg" value="accept" checked> accept</label><label><input type="radio" name="dlg" value="dismiss"> dismiss</label></div>`;
   } else if (fileActions.includes(action)) {
-    html = `<input type="text" class="pw-input" id="action-param" placeholder="/path/to/file.pdf" style="width:100%"/>`;
+    html = `<input type="text" class="pw-input" id="action-param" placeholder="Paste absolute file path e.g. /Users/you/file.pdf" style="width:100%;border-color:var(--purple);"/>`;
   }
   const pi = $('param-inputs');
   pi.innerHTML = html;
   pi.style.display = html ? 'block' : 'none';
+
+  // Restore the user's typed value after the input is re-created
+  if (existingValue) {
+    const newInput = document.getElementById('action-param');
+    if (newInput && newInput.tagName === 'INPUT') newInput.value = existingValue;
+  }
 }
 
 function getActionParams() {
   const action = $('action-select').value;
   const p = document.getElementById('action-param');
-  if (p) return { text: p.value, value: p.value };
+  if (p) {
+    const val = p.value.trim();
+    if (action === 'upload') return { file_paths: val, text: val, value: val };
+    return { text: val, value: val };
+  }
   const dlg = document.querySelector('input[name="dlg"]:checked');
   if (dlg) return { action: dlg.value };
   return {};
@@ -2287,6 +2301,20 @@ function doValidate() {
     $('validate-time').textContent = '';
     $('add-step-btn').style.display = 'none';
     return;
+  }
+
+  // Guard: upload action needs a real file path
+  if (action === 'upload') {
+    const fp = (params.file_paths || params.text || '').trim();
+    if (!fp || fp === '/path/to/file.pdf') {
+      const vr = $('validate-result');
+      vr.className = 'pw-validate-result show fail';
+      $('validate-icon').textContent = '⚠';
+      $('validate-text').textContent = 'Paste the absolute file path in the field above before validating (e.g. /Users/you/resume.pdf)';
+      $('validate-time').textContent = '';
+      $('add-step-btn').style.display = 'none';
+      return;
+    }
   }
 
   state._fixValidating = false;
@@ -3101,22 +3129,35 @@ function renderRepairTrace(meta) {
 function onRepairApplied(payload) {
   if (!payload) return;
   applyLocalStepOverride(payload.stepId, payload.locator, payload.params);
-  const msg = payload.locator
-    ? `Applied to step ${payload.stepId || ''} and resumed with locator: ${String(payload.locator).slice(0, 120)}`
-    : `Applied to step ${payload.stepId || ''} and resumed`;
+  const savedPath = payload.savedPath || null;
+  const locatorStr = String(payload.locator || '').slice(0, 120);
+  const msg = locatorStr
+    ? `Applied locator: ${locatorStr}`
+    : `Applied to step ${payload.stepId || ''}`;
+  const savedMsg = savedPath ? ` · saved to ${savedPath}` : ' · (save failed)';
   setAutoFixStatus(msg, 'running');
   $('sb-last-run').textContent = 'Last run: repair applied';
   $('sb-last-run').className = 'status-item ok';
   const status = $('repair-apply-status');
   if (status) {
     status.style.display = 'block';
-    status.textContent = msg.trim();
+    status.textContent = (msg + savedMsg).trim();
   }
   const fixStatus = $('fix-status');
   if (fixStatus && state.repairMode === 'manual') {
     fixStatus.style.display = 'block';
     fixStatus.style.color = 'var(--success)';
-    fixStatus.textContent = msg.trim();
+    fixStatus.textContent = (msg + savedMsg).trim();
+  }
+  // Update LLM Assist thread message now that we know the save status
+  const thread = $('la-thread');
+  if (thread) {
+    const lastSysMsg = thread.querySelector('.la-sys-msg:last-child');
+    if (lastSysMsg && lastSysMsg.textContent.includes('saving to disk')) {
+      lastSysMsg.textContent = savedPath
+        ? `✓ Fix applied and saved → ${savedPath}`
+        : '✓ Fix applied to step (disk save failed — check logs)';
+    }
   }
 }
 
@@ -3547,7 +3588,7 @@ function laOnPickResult(descriptor, candidates) {
   return true;
 }
 
-// Serialise laState.iterations for the LLM — includes every sub-attempt with exact errors
+// Serialise laState.iterations for the LLM — includes every sub-attempt with exact errors + DOM diff
 function laSerialiseHistory() {
   return laState.iterations.map(it => ({
     iteration: it.iteration,
@@ -3558,6 +3599,7 @@ function laSerialiseHistory() {
     error: it.error || null,            // exact error string from execution
     exec_detail: it.execDetail || null,
     uploadMethod: it.uploadMethod || null,
+    domDiff: it.domDiff || null,        // { changed, summary, addedSignals, tagDelta }
   }));
 }
 
@@ -3596,7 +3638,7 @@ $('la-worked-btn').addEventListener('click', () => {
   $('la-outcome-row').style.display = 'none';
   send({ type: 'accept_llm_repair', payload: { stepId, locator: laState.currentLocator } });
   applyLocalStepOverride(stepId, laState.currentLocator, null);
-  laAddSystemMsg('✓ Fix applied to step.');
+  laAddSystemMsg('✓ Fix applied to step — saving to disk…');
 });
 
 // Still broken — user says the executed action didn't actually fix it visually → auto-loop
@@ -3671,6 +3713,7 @@ function onLlmAssistResult(payload) {
     error: payload.execError || null,
     execDetail: payload.execDetail || null,
     uploadMethod: payload.uploadMethod || null,
+    domDiff: payload.domDiff || null,
   };
   laState.iterations.push(iter);
   if (iter.locator) laState.currentLocator = iter.locator;
@@ -3687,6 +3730,8 @@ function onLlmAssistResult(payload) {
       ? 'Executed on page — check if it worked visually ↓'
       : ('Attempt failed: ' + (iter.error || 'unknown error'));
     if (iter.uploadMethod) msg += ` [${iter.uploadMethod}]`;
+    const diff = iter.domDiff;
+    if (diff) msg += diff.changed ? ` · DOM changed` : ` · DOM unchanged`;
     $('la-validate-msg').textContent = msg;
     $('la-validate-time').textContent = '';
   }
@@ -3738,16 +3783,28 @@ function laRenderIterCard(iter, idx) {
   const outcomeLabel = iter.outcome === 'exec_passed' ? '✓ ran' : iter.outcome === 'exec_failed' ? '✗ failed' : iter.outcome === 'worked' ? '✓ worked' : '…';
   const outcomeClass = (iter.outcome === 'exec_passed' || iter.outcome === 'worked') ? 'ok' : 'fail';
 
+  const diff = iter.domDiff;
+  const diffBadge = diff
+    ? (diff.changed
+        ? `<span class="la-iter-badge" style="background:rgba(80,200,120,0.15);color:#50c878;border-color:rgba(80,200,120,0.3);">DOM changed</span>`
+        : `<span class="la-iter-badge" style="background:rgba(220,80,80,0.12);color:#e06c6c;border-color:rgba(220,80,80,0.25);">DOM unchanged</span>`)
+    : '';
+  const diffSummary = diff && diff.summary
+    ? `<div style="padding:2px 9px 4px;font-size:9px;color:var(--fg-3);">${escHtml(diff.summary)}</div>`
+    : '';
+
   card.innerHTML = `
     <div class="la-iter-head">
       <span class="la-iter-num">#${iter.iteration}</span>
       ${iter.uploadMethod ? `<span class="la-iter-badge diag">${escHtml(iter.uploadMethod)}</span>` : `<span class="la-iter-badge diag">llm</span>`}
+      ${diffBadge}
       <span class="la-iter-outcome ${outcomeClass}" id="la-iter-outcome-${idx}">${outcomeLabel}</span>
     </div>
     <div class="la-iter-body" style="font-size:10px;color:var(--fg-2);">${escHtml(iter.diagnosis)}</div>
     ${iter.plan ? `<div class="la-iter-action" style="color:var(--accent)">${escHtml(iter.plan)}</div>` : ''}
     ${iter.locator ? `<div style="padding:3px 9px 5px;font-family:var(--font-mono);font-size:9px;color:var(--accent);word-break:break-all;">→ ${escHtml(iter.locator)}</div>` : ''}
     ${iter.error ? `<div style="padding:3px 9px 5px;font-family:var(--font-mono);font-size:9px;color:var(--danger);word-break:break-all;">✗ ${escHtml(iter.error)}</div>` : ''}
+    ${diffSummary}
     ${iter.capturedDom ? `<div class="la-dom-toggle" onclick="this.nextElementSibling.classList.toggle('show');this.textContent=this.nextElementSibling.classList.contains('show')?'▲ hide DOM':'▼ show DOM sent to LLM'">▼ show DOM sent to LLM</div><pre class="la-dom-pre">${escHtml(iter.capturedDom)}</pre>` : ''}
   `;
   thread.appendChild(card);
