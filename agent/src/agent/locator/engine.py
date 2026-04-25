@@ -284,13 +284,13 @@ def _visibility_actionability_score(visible_count: int, actionable: bool) -> flo
 
 def _stability_score(candidate: PortedCandidate) -> float:
     stable_by_strategy = {
-        "testid": 0.96,
-        "scoped_chain": 0.93,
-        "aria_label": 0.86,
-        "label": 0.84,
-        "role_name": 0.8,
-        "placeholder": 0.74,
-        "stable_text": 0.68,
+        "aria_label": 0.96,
+        "role_name": 0.94,
+        "label": 0.92,
+        "placeholder": 0.9,
+        "stable_text": 0.88,
+        "testid": 0.84,
+        "scoped_chain": 0.82,
         "scoped_css": 0.58,
         "xpath_nth_fallback": 0.45,
     }

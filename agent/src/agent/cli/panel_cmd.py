@@ -32,6 +32,7 @@ from agent.panel.bridge import (
     MSG_SAVE_VERSION,
     MSG_SET_LLM_MODE,
     MSG_START_RECORDING,
+    MSG_STOP_REPLAY,
     MSG_STOP_RECORDING,
     MSG_VALIDATE_STEP,
     PanelBridge,
@@ -158,6 +159,7 @@ async def _run_panel(
     bridge.on(MSG_DELETE_STEP, state.handle_delete_step)
     bridge.on(MSG_DUPLICATE_STEP, state.handle_duplicate_step)
     bridge.on(MSG_REPLAY, state.handle_replay)
+    bridge.on(MSG_STOP_REPLAY, state.handle_stop_replay)
     bridge.on(MSG_PAUSE_REQUEST, state.handle_pause_request)
     bridge.on(MSG_RESUME, state.handle_resume)
     bridge.on(MSG_FORCE_FIX, state.handle_force_fix)
@@ -183,13 +185,13 @@ async def _run_panel(
         logger.info("panel_navigated", url=start_url)
 
     actual_port = bridge.ws_port
-    typer.echo(f"\n  Playwright Agent panel running.")
+    typer.echo("\n  Playwright Agent panel running.")
     typer.echo(f"  Browser:   {'headless' if headless else 'visible'}")
     typer.echo(f"  WS bridge: ws://127.0.0.1:{actual_port}/ws")
     typer.echo(f"  Panel URL: http://127.0.0.1:{actual_port}/panel")
     if start_url:
         typer.echo(f"  Opened:    {start_url}")
-    typer.echo(f"\n  Press Ctrl+C to stop.\n")
+    typer.echo("\n  Press Ctrl+C to stop.\n")
 
     try:
         # Keep running until Ctrl+C or browser close
@@ -249,6 +251,7 @@ class _PanelState:
         # Debounce: track pending fill events — key = semantic_key, value = (value, target)
         self._pending_fills: dict[str, tuple[str, dict[str, Any]]] = {}
         self._last_click_key: str | None = None  # prevent duplicate click for same element
+        self._capture_suspend_depth = 0
 
     # ── Pick ─────────────────────────────────────────────────────────────
 
@@ -265,7 +268,7 @@ class _PanelState:
         except Exception as exc:
             logger.debug("pick_start_eval_error", error=str(exc))
 
-        # Listen for pick-click result via page binding
+        # Listen for pick-click result via panel callback binding
         async def on_pick_result(descriptor_json: str) -> None:
             try:
                 descriptor = json.loads(descriptor_json)
@@ -278,12 +281,27 @@ class _PanelState:
         except Exception:
             pass  # already exposed
 
-        # Inject click capture for pick mode
+        # If recorder script owns pick-click interception, bridge its pick payload to panel flow.
+        async def on_pick_emit(payload: Any) -> None:
+            if not isinstance(payload, dict):
+                return
+            target = payload.get("target")
+            if isinstance(target, dict):
+                await self._process_pick_result(target)
+
+        try:
+            await self.page.expose_function("__agentPickEmit", on_pick_emit)
+        except Exception:
+            pass  # already exposed
+
+        # Inject click capture for pick mode when recorder script is not installed.
+        # Recorder-installed pages already intercept pick clicks and call __agentPickEmit.
         await self.page.evaluate("""
         (() => {
             if (window.__agentPickListenerInstalled) return;
             window.__agentPickListenerInstalled = true;
             document.addEventListener('click', function(e) {
+                if (window.__agentRecorderInstalled) return;
                 if (!window.__agentPickIntent || !window.__agentPickIntent.kind) return;
                 const panel = document.getElementById('__agent_panel_host');
                 if (panel && e.target === panel) return;
@@ -343,7 +361,11 @@ class _PanelState:
 
         start_ms = int(time.time() * 1000)
         try:
-            await self._execute_action(action, locator, params)
+            await self._suspend_auto_capture()
+            try:
+                await self._execute_action(action, locator, params)
+            finally:
+                await self._resume_auto_capture()
             duration_ms = int(time.time() * 1000) - start_ms
             await self.bridge.broadcast_validate_result(passed=True, duration_ms=duration_ms)
         except Exception as exc:
@@ -405,6 +427,8 @@ class _PanelState:
     # ── Replay ────────────────────────────────────────────────────────────
 
     async def handle_replay(self, msg: dict[str, Any]) -> None:
+        if self._recording_active:
+            await self.handle_stop_recording({})
         if self._replay_task and not self._replay_task.done():
             self._replay_task.cancel()
         self._pause_requested = False
@@ -415,33 +439,51 @@ class _PanelState:
             self._run_replay(start_step_id=start_step_id)
         )
 
+    async def handle_stop_replay(self, _msg: dict[str, Any]) -> None:
+        should_broadcast_abort = False
+        if self._replay_task and not self._replay_task.done():
+            self._replay_task.cancel()
+            should_broadcast_abort = True
+        elif self._paused_step_id is not None or self._failing_step_id is not None:
+            should_broadcast_abort = True
+        self._pause_requested = False
+        self._paused_step_id = None
+        self._failing_step_id = None
+        if should_broadcast_abort:
+            await self.bridge.send({"type": "run_aborted", "payload": {}})
+
     async def _run_replay(self, start_step_id: str | None = None) -> None:
-        started = start_step_id is None
-        for step in self.step_graph.steps:
-            if not started:
-                if step.step_id == start_step_id:
-                    started = True
-                else:
-                    continue
+        await self._suspend_auto_capture()
+        try:
+            started = start_step_id is None
+            for step in self.step_graph.steps:
+                if not started:
+                    if step.step_id == start_step_id:
+                        started = True
+                    else:
+                        continue
 
-            if self._pause_requested:
-                self._pause_requested = False
-                await self.bridge.broadcast_pause(step.step_id, "Pause requested")
-                return
+                if self._pause_requested:
+                    self._pause_requested = False
+                    self._paused_step_id = step.step_id
+                    await self.bridge.broadcast_pause(step.step_id, "Pause requested")
+                    return
 
-            await self.bridge.broadcast_step_status(step.step_id, "running")
-            try:
-                locator = step.metadata.get("locator")
-                params = step.metadata.get("params") or {}
-                await self._execute_action(step.action, locator, params)
-                await self.bridge.broadcast_step_status(step.step_id, "passed")
-            except Exception as exc:
-                self._failing_step_id = step.step_id
-                await self.bridge.broadcast_step_status(step.step_id, "failed", error=_friendly_error(str(exc)))
-                await self.bridge.broadcast_pause(step.step_id, str(exc))
-                return
+                await self.bridge.broadcast_step_status(step.step_id, "running")
+                try:
+                    locator = step.metadata.get("locator")
+                    params = step.metadata.get("params") or {}
+                    await self._execute_action(step.action, locator, params)
+                    await self.bridge.broadcast_step_status(step.step_id, "passed")
+                except Exception as exc:
+                    self._failing_step_id = step.step_id
+                    await self.bridge.broadcast_step_status(step.step_id, "failed", error=_friendly_error(str(exc)))
+                    await self.bridge.broadcast_pause(step.step_id, str(exc))
+                    return
 
-        await self.bridge.send({"type": "run_completed", "payload": {}})
+            await self.bridge.send({"type": "run_completed", "payload": {}})
+        finally:
+            await self._resume_auto_capture()
 
     async def handle_pause_request(self, _msg: dict[str, Any]) -> None:
         self._pause_requested = True
@@ -482,20 +524,34 @@ class _PanelState:
     # ── Force-fix ─────────────────────────────────────────────────────────
 
     async def handle_force_fix(self, msg: dict[str, Any]) -> None:
-        step_id = msg.get("payload", {}).get("stepId") or self._failing_step_id
+        payload = msg.get("payload", {})
+        step_id = payload.get("stepId") or self._failing_step_id
         if not step_id:
+            await self.bridge.broadcast_force_fix_progress(
+                stage=4,
+                status="fail",
+                repaired=False,
+                explanation="Auto-fix could not start because no failing step is selected.",
+            )
             return
 
         step = next((s for s in self.step_graph.steps if s.step_id == step_id), None)
         if not step:
+            await self.bridge.broadcast_force_fix_progress(
+                stage=4,
+                status="fail",
+                repaired=False,
+                explanation=f"Auto-fix could not start because step {step_id} was not found.",
+            )
             return
 
         from agent.healing.force_fix import run_force_fix_cascade
 
-        primary = step.target.primary_selector if step.target else ""
+        logger.info("force_fix_requested", step_id=step_id, has_override=bool(payload.get("primarySelector")))
+        primary = payload.get("primarySelector") or (step.target.primary_selector if step.target else "")
         fallbacks = step.target.fallback_selectors if step.target else []
         descriptor = step.metadata.get("descriptor") or {}
-        params = step.metadata.get("params") or {}
+        params = payload.get("params") or step.metadata.get("params") or {}
 
         async def on_progress(
             stage: int,
@@ -511,16 +567,6 @@ class _PanelState:
                 locator=locator,
                 explanation=explanation,
             )
-            if repaired and locator:
-                # Update the step's locator immediately
-                step.metadata["locator"] = locator
-                if step.target:
-                    bundle = LocatorBundle(
-                        primarySelector=locator,
-                        fallbackSelectors=[primary] if primary and primary != locator else fallbacks,
-                        confidenceScore=0.8,
-                    )
-                    object.__setattr__(step, "target", bundle)
 
         result = await run_force_fix_cascade(
             self.page,
@@ -592,6 +638,10 @@ class _PanelState:
             return
         steps = await self.versions_store.load_version(self.run_id, name)
         if steps is not None:
+            self.step_graph.steps = [
+                _step_from_dict(step_dict, self.tab_id)
+                for step_dict in steps
+            ]
             await self.bridge.send({
                 "type": "version_loaded",
                 "payload": {"name": name, "steps": steps},
@@ -678,7 +728,7 @@ class _PanelState:
         """Poll the in-page capture queue and convert events to steps."""
         while self._recording_active:
             try:
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.15)
                 events = await self.page.evaluate("""
                     (() => {
                         if (!window.__agentRecorderDrain) return [];
@@ -691,6 +741,8 @@ class _PanelState:
                 # After processing the batch, flush any pending fills that haven't been
                 # superseded (i.e. no more input events for that element in this batch)
                 await self._flush_pending_fills()
+                # Deduplicate only within one poll cycle.
+                self._last_click_key = None
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -698,6 +750,9 @@ class _PanelState:
 
     async def _process_capture_event(self, evt: dict[str, Any]) -> None:
         """Convert a raw capture event into a step and broadcast it."""
+        if self._capture_suspend_depth > 0:
+            logger.debug("auto_capture_suppressed event_type=%s", evt.get("eventType", ""))
+            return
         event_type = evt.get("eventType", "")
         target = evt.get("target") or {}
         semantic_key = target.get("targetSemanticKey") or ""
@@ -718,6 +773,7 @@ class _PanelState:
         if event_type == "click":
             # Skip duplicate click on same element within the same poll cycle
             if semantic_key and semantic_key == self._last_click_key:
+                logger.debug("auto_click_deduped semantic_key=%s", semantic_key)
                 return
             self._last_click_key = semantic_key
             await self._emit_step_from_target("click", target, {})
@@ -738,7 +794,6 @@ class _PanelState:
         for _key, (value, target) in list(self._pending_fills.items()):
             await self._emit_step_from_target("fill", target, {"text": value, "value": value})
         self._pending_fills.clear()
-        self._last_click_key = None  # Reset click dedup each poll cycle
 
     async def _emit_step_from_target(
         self, action: str, target: dict[str, Any], params: dict[str, Any]
@@ -750,7 +805,27 @@ class _PanelState:
             ranked = []
 
         if not ranked:
-            return
+            # Auto mode should not silently drop clicks just because the best-candidate
+            # path was ambiguous; retry with force and finally xpath fallback.
+            try:
+                ranked = await self.locator_engine.rank_candidates(self.page, target, force=True)
+            except Exception:
+                ranked = []
+            if not ranked:
+                fallback = _fallback_locator_from_target(target)
+                if not fallback:
+                    logger.debug("auto_step_dropped_no_locator action=%s target=%s", action, target.get("targetSemanticKey", ""))
+                    return
+                ranked = [
+                    type(
+                        "_AutoFallbackCandidate",
+                        (),
+                        {
+                            "selector": fallback,
+                            "confidence_score": 0.25,
+                        },
+                    )()
+                ]
 
         locator = ranked[0].selector
         fallbacks = [c.selector for c in ranked[1:4]]
@@ -905,6 +980,16 @@ class _PanelState:
         t = action.replace("-", "_")
         text = params.get("text") or params.get("value") or ""
         timeout_ms = 10_000.0
+        try:
+            custom_timeout = params.get("timeoutMs")
+            if custom_timeout is None:
+                custom_timeout = params.get("timeout_ms")
+            if custom_timeout is not None:
+                timeout_ms = float(custom_timeout)
+            if timeout_ms <= 0:
+                timeout_ms = 10_000.0
+        except Exception:
+            timeout_ms = 10_000.0
 
         if t == "click":
             await self.tool_runtime.click(tab_id=tab_id, target=_require(locator, "click"), timeout_ms=timeout_ms)
@@ -961,12 +1046,38 @@ class _PanelState:
         elif t == "wait_for":
             state = params.get("state") or "visible"
             if locator:
-                await self.tool_runtime.wait_for(tab_id=tab_id, target=locator, state=state, timeout_ms=30_000)
+                await self.tool_runtime.wait_for(tab_id=tab_id, target=locator, state=state, timeout_ms=timeout_ms)
         elif t == "dialog_handle":
             dialog_action = params.get("action") or "accept"
             await self.tool_runtime.dialog_handle(tab_id=tab_id, accept=(dialog_action == "accept"))
         else:
             raise ValueError(f"Unsupported action: {action}")
+
+    async def _suspend_auto_capture(self) -> None:
+        self._capture_suspend_depth += 1
+        if self._capture_suspend_depth == 1:
+            self._pending_fills.clear()
+            self._last_click_key = None
+            if self._recording_active:
+                try:
+                    await self.page.evaluate("window.__agentRecorderArmed = false;")
+                except Exception:
+                    pass
+
+    async def _resume_auto_capture(self) -> None:
+        if self._capture_suspend_depth > 0:
+            self._capture_suspend_depth -= 1
+        if self._capture_suspend_depth == 0 and self._recording_active:
+            try:
+                # Drop any queued events captured right around suspend/resume boundaries.
+                await self.page.evaluate("""
+                    (() => {
+                        if (window.__agentRecorderDrain) window.__agentRecorderDrain();
+                        window.__agentRecorderArmed = true;
+                    })()
+                """)
+            except Exception:
+                pass
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1024,7 +1135,7 @@ def _step_to_dict(step: Step, locator: str | None, params: dict[str, Any] | None
 
 def _friendly_error(error: str) -> str:
     if "TimeoutError" in error or "Timeout" in error:
-        return "Timeout — element not found within time limit"
+        return "Timeout — element not found within time limit (try higher timeout or fix locator)"
     if "not visible" in error or "not actionable" in error:
         return "Element not actionable"
     if "locator not found" in error or "No element" in error or "strict mode" in error:
@@ -1032,6 +1143,24 @@ def _friendly_error(error: str) -> str:
     if "Expected" in error and "received" in error:
         return error[:120]
     return error[:120]
+
+
+def _fallback_locator_from_target(target: dict[str, Any]) -> str | None:
+    xpath = target.get("absoluteXPath")
+    if isinstance(xpath, str) and xpath.strip():
+        return f"xpath={xpath.strip()}"
+    return None
+
+
+def _step_from_dict(raw: dict[str, Any], tab_id: str) -> Step:
+    action = str(raw.get("action") or "click")
+    locator = raw.get("locator")
+    params = raw.get("params") or {}
+    step = _build_step(action=action, locator=locator, params=params, tab_id=tab_id)
+    step_id = raw.get("stepId")
+    if isinstance(step_id, str) and step_id.strip():
+        step = step.model_copy(update={"step_id": step_id})
+    return step
 
 
 def _try_load_llm_provider() -> Any | None:
@@ -1086,7 +1215,8 @@ def _persist_llm_config(provider: str, api_key: str, model: str, api_base: str) 
 
 def _load_persisted_llm_config() -> None:
     """Load persisted LLM config into env vars if env vars not already set."""
-    import json, os
+    import os
+
     config_path = Path.home() / ".agent" / "llm_config.json"
     if not config_path.exists():
         return

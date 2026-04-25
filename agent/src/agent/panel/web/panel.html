@@ -493,6 +493,7 @@ html, body {
   display: none; font-family: var(--font-mono); font-size: 10px;
   padding: 2px 5px; border-radius: 3px; margin-top: 3px;
 }
+.step-inline-result.running { display: block; background: var(--info-ghost); color: var(--info); }
 .step-inline-result.pass { display: block; background: var(--success-ghost); color: var(--success); }
 .step-inline-result.fail { display: block; background: var(--danger-ghost); color: var(--danger); }
 
@@ -535,6 +536,13 @@ html, body {
   font-size: 13px; font-weight: 600; line-height: 1; font-family: var(--font-mono);
 }
 .pw-insert:hover .ins-btn { background: var(--accent); color: #0b0d10; }
+#panel-root.repair-active .pw-step-wrap:hover .pw-insert,
+#panel-root.replay-active .pw-step-wrap:hover .pw-insert,
+#panel-root.step-run-active .pw-step-wrap:hover .pw-insert {
+  opacity: 0;
+  height: 4px;
+  pointer-events: none;
+}
 
 /* Step row */
 .pw-step {
@@ -632,6 +640,12 @@ html, body {
 }
 .pw-fix-editor.show { display: block; }
 .fix-editor-title { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--warn); margin-bottom: 8px; }
+.fix-editor-title .title-grow { flex: 1; }
+.fix-close-btn {
+  border: 1px solid rgba(210,153,34,0.25); background: transparent; color: var(--fg-3);
+  border-radius: 3px; width: 22px; height: 22px; cursor: pointer; line-height: 1;
+}
+.fix-close-btn:hover { color: var(--fg-0); background: rgba(210,153,34,0.12); }
 
 /* ── Force-fix cascade ── */
 .pw-cascade-wrap {
@@ -659,7 +673,7 @@ html, body {
 .stage-ico.pass { color: var(--success); }
 .stage-ico.fail { color: var(--danger); }
 .stage-lbl { flex: 1; color: var(--fg-2); }
-.stage-result { color: var(--fg-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+.stage-result { color: var(--fg-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 108px; min-width: 0; }
 .stage-result.pass { color: var(--success); }
 .stage-result.fail { color: var(--danger); }
 
@@ -670,9 +684,9 @@ html, body {
 }
 .pw-llm-result.show { display: block; }
 .llm-result-label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
-.llm-result-txt { font-size: 11px; color: var(--fg-1); line-height: 1.4; word-break: break-word; }
-.llm-selector-display { font-family: var(--font-mono); font-size: 10.5px; color: var(--accent); background: rgba(0,0,0,0.3); padding: 3px 7px; border-radius: 3px; margin-top: 5px; word-break: break-all; }
-.llm-result-btns { display: flex; gap: 6px; margin-top: 8px; }
+.llm-result-txt { font-size: 11px; color: var(--fg-1); line-height: 1.4; word-break: break-word; max-height: 112px; overflow-y: auto; padding-right: 4px; }
+.llm-selector-display { font-family: var(--font-mono); font-size: 10.5px; color: var(--accent); background: rgba(0,0,0,0.3); padding: 3px 7px; border-radius: 3px; margin-top: 5px; word-break: break-all; max-height: 58px; overflow-y: auto; }
+.llm-result-btns { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .llm-result-btns .pw-btn { flex: 1; height: 26px; font-size: 10.5px; }
 
 /* ── Versions section ── */
@@ -764,6 +778,13 @@ html, body {
 .fp-error { padding: 8px 12px; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-1); line-height: 1.5; word-break: break-word; border-bottom: 1px solid rgba(248,81,73,0.15); }
 .fp-actions { display: flex; gap: 6px; padding: 8px 12px; flex-wrap: wrap; }
 .fp-actions .pw-btn { flex: 1; min-width: 90px; }
+.fp-autofix-status {
+  margin: 0 12px 10px; padding: 6px 8px; border-radius: 4px;
+  background: var(--bg-sunken); border: 1px solid rgba(248,81,73,0.2);
+  color: var(--fg-2); font-family: var(--font-mono); font-size: 10px;
+}
+.fp-autofix-status.error { color: var(--danger); background: var(--danger-ghost); }
+.fp-autofix-status.running { color: var(--accent); border-color: var(--accent-line); }
 </style>
 </head>
 <body>
@@ -1036,13 +1057,16 @@ html, body {
             Resume anyway
           </button>
         </div>
+        <div class="fp-autofix-status" id="fp-autofix-status" style="display:none;"></div>
       </div>
 
       <!-- ── INLINE FIX EDITOR ── -->
       <div class="pw-fix-editor" id="fix-editor">
         <div class="fix-editor-title">
           <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><path d="M7 1l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z"/></svg>
-          Edit failing step
+          <span>Edit failing step</span>
+          <span class="title-grow"></span>
+          <button class="fix-close-btn" id="fix-close-btn" title="Close fix editor">×</button>
         </div>
         <div style="margin-bottom:6px;">
           <div style="font-size:10px;color:var(--fg-3);margin-bottom:3px;">Locator</div>
@@ -1052,9 +1076,24 @@ html, body {
           <div style="font-size:10px;color:var(--fg-3);margin-bottom:3px;">Value / param</div>
           <input type="text" class="pw-input" id="fix-param-input" placeholder="Value (if applicable)…" style="width:100%;"/>
         </div>
+        <div style="margin-bottom:8px;">
+          <div style="font-size:10px;color:var(--fg-3);margin-bottom:3px;">Timeout (ms)</div>
+          <input type="number" class="pw-input" id="fix-timeout-input" placeholder="10000" min="1000" step="500" style="width:100%;"/>
+        </div>
+        <div id="fix-status" style="display:none;font-size:10px;font-family:var(--font-mono);margin-bottom:8px;"></div>
+        <div style="font-size:10px;color:var(--fg-3);line-height:1.45;margin-bottom:8px;">
+          Validate fix runs this step once with the locator/value/timeout above.<br>
+          Need AI healing? Use <strong>Auto-fix</strong> in the failure panel (LLM stage 4).
+        </div>
         <div class="pw-row">
           <button class="pw-btn" id="fix-validate-btn" style="flex:1;">Validate fix</button>
           <button class="pw-btn primary" id="fix-apply-btn" disabled style="flex:1;">Apply &amp; Resume</button>
+        </div>
+        <div class="pw-row" style="margin-top:6px;">
+          <button class="pw-btn danger" id="fix-autofix-btn" style="width:100%;">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M6 .5l1.2 2.8L10 4.5l-2.8 1.2L6 8.5 4.8 5.7 2 4.5l2.8-1.2L6 .5z"/></svg>
+            Auto-fix (LLM)
+          </button>
         </div>
       </div>
 
@@ -1080,6 +1119,7 @@ html, body {
             <div class="llm-result-btns">
               <button class="pw-btn primary" id="accept-repair-btn">Accept repair</button>
               <button class="pw-btn" id="try-manual-btn">Manual fix</button>
+              <button class="pw-btn" id="close-repair-btn">Close</button>
             </div>
           </div>
         </div>
@@ -1213,6 +1253,8 @@ const state = {
   currentUrl: '',
   insertAfterStepId: null,
   _fixValidating: false,
+  repairMode: 'none',       // none | failed | autoFix | llmResult | manual
+  proposedRepairLocator: null,
   activeVersion: 'main',
   versions: [],
   savingVersion: false,
@@ -1221,6 +1263,8 @@ const state = {
   _stepRunStates: {},        // stepId -> 'running' | 'pass' | 'fail' | null
   panelMode: 'edit',         // 'edit' | 'replaying' | 'failed'
   _addingStepInFailed: false,
+  _pendingStepRunStartedAt: 0,
+  _stepRunTicker: null,
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -1270,7 +1314,26 @@ function connectWs() {
   };
 }
 function scheduleReconnect() { setTimeout(connectWs, 2000); }
-function send(msg) { if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(msg)); }
+function send(msg) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+  state.ws.send(JSON.stringify(msg));
+  return true;
+}
+
+function setAutoFixStatus(text, kind = 'running') {
+  const fpStatus = $('fp-autofix-status');
+  if (fpStatus) {
+    fpStatus.style.display = text ? 'block' : 'none';
+    fpStatus.textContent = text || '';
+    fpStatus.className = 'fp-autofix-status ' + kind;
+  }
+  const fixStatus = $('fix-status');
+  if (fixStatus && state.repairMode === 'manual') {
+    fixStatus.style.display = text ? 'block' : 'none';
+    fixStatus.style.color = kind === 'error' ? 'var(--danger)' : 'var(--accent)';
+    fixStatus.textContent = text || '';
+  }
+}
 
 // ── Message handling ──────────────────────────────────────────────────────────
 function handleMessage(msg) {
@@ -1281,6 +1344,7 @@ function handleMessage(msg) {
     case 'replay_step_status': onStepStatus(payload); break;
     case 'pause':             onPause(payload); break;
     case 'run_completed':     onRunCompleted(); break;
+    case 'run_aborted':       onRunAborted(); break;
     case 'force_fix_progress': onForceFixProgress(payload); break;
     case 'step_appended':     if (payload && payload.step) { appendStepToList(payload.step); } break;
     case 'steps_state':       if (payload && payload.steps) { state.steps = payload.steps; renderStepList(); restorePauseState(); updateReplayControls(); } break;
@@ -1351,6 +1415,7 @@ function setPanelMode(mode) {
   const editing = mode === 'edit';
   const replaying = mode === 'replaying';
   const failed = mode === 'failed';
+  root.classList.toggle('replay-active', replaying || failed);
 
   // Show/hide recording UI
   $('mode-toggle').style.display = editing ? '' : 'none';
@@ -1361,8 +1426,9 @@ function setPanelMode(mode) {
   // Replay status bar
   $('replay-status-bar').classList.toggle('show', replaying || failed);
 
-  // Failure panel
-  $('failure-panel').classList.toggle('show', failed);
+  // Failure and repair surfaces are controlled by repairMode.
+  if (!failed && state.repairMode !== 'none') setRepairMode('none');
+  else applyRepairMode();
 
   // Controls — show/hide static buttons by mode class
   const ctrl = $('replay-controls');
@@ -1378,33 +1444,79 @@ function setPanelMode(mode) {
   // Save / load bar
   const vbar = $('pw-versions-bar');
   if (vbar) vbar.style.display = editing ? '' : 'none';
+  updateStickyOffsets();
+}
+
+function setRepairMode(mode, opts = {}) {
+  state.repairMode = mode;
+  root.classList.toggle('repair-active', mode !== 'none');
+  root.dataset.repairMode = mode;
+  applyRepairMode();
+  if (opts.scroll) {
+    const target = mode === 'manual' ? $('fix-editor')
+      : (mode === 'autoFix' || mode === 'llmResult') ? $('cascade-wrap')
+      : $('failure-panel');
+    safeScrollIntoView(target);
+  }
+}
+
+function applyRepairMode() {
+  const mode = state.repairMode;
+  $('failure-panel').classList.toggle('show', mode === 'failed');
+  $('cascade-wrap').classList.toggle('show', mode === 'autoFix' || mode === 'llmResult');
+  $('fix-editor').classList.toggle('show', mode === 'manual');
+  $('llm-result-box').classList.toggle('show', mode === 'llmResult');
+}
+
+function updateStickyOffsets() {
+  const toolbar = document.querySelector('.pw-steps-toolbar');
+  const replayBar = $('replay-status-bar');
+  if (!toolbar || !replayBar) return;
+  const replayVisible = replayBar.classList.contains('show');
+  toolbar.style.top = replayVisible ? `${replayBar.offsetHeight || 0}px` : '0px';
+}
+
+function safeScrollIntoView(el) {
+  if (!el) return;
+  const scroller = $('panel-scroll-body');
+  if (!scroller) return;
+  const rect = el.getBoundingClientRect();
+  const bounds = scroller.getBoundingClientRect();
+  if (rect.top < bounds.top || rect.bottom > bounds.bottom) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 function startReplay() {
+  if (state.recording) {
+    state.recording = false;
+    send({ type: 'stop_recording', payload: {} });
+  }
   state.replayStatus = 'running';
   state.failingStepId = null;
+  state.proposedRepairLocator = null;
   state._addingStepInFailed = false;
   state.steps.forEach(s => { s._uiStatus = 'pending'; s._error = null; });
   renderStepList();
-  $('cascade-wrap').classList.remove('show');
-  $('fix-editor').classList.remove('show');
-  $('failure-panel').classList.remove('show');
+  setRepairMode('none');
   setWorkflowStage('replay');
   updateReplayStatusBar('running', null, null);
   setPanelMode('replaying');
   send({ type: 'replay', payload: {} });
 }
 
-function stopReplay() {
+function stopReplay(opts) {
+  const options = opts || {};
+  const notifyBackend = options.notifyBackend !== false;
+  if (notifyBackend) send({ type: 'stop_replay', payload: {} });
   state.replayStatus = 'idle';
   state.failingStepId = null;
   state.forceFixActive = false;
+  state.proposedRepairLocator = null;
   state._addingStepInFailed = false;
   state.steps.forEach(s => { s._uiStatus = 'pending'; s._error = null; });
   $('replay-status-bar').classList.remove('show', 'done', 'failed-bar');
-  $('failure-panel').classList.remove('show');
-  $('cascade-wrap').classList.remove('show');
-  $('fix-editor').classList.remove('show');
+  setRepairMode('none');
   renderStepList();
   setPanelMode('edit');
 }
@@ -1458,8 +1570,8 @@ function showFailurePanel(stepId, error) {
   const idx = step ? state.steps.indexOf(step) : -1;
   $('fp-title').textContent = 'Step ' + (idx + 1) + ' failed — ' + (step ? step.action : '');
   $('fp-error').textContent = error || (step && step._error) || 'Unknown error';
-  $('failure-panel').classList.add('show');
-  setTimeout(() => $('failure-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+  state.proposedRepairLocator = null;
+  setRepairMode('failed', { scroll: true });
 }
 
 // ── URL ───────────────────────────────────────────────────────────────────────
@@ -1786,6 +1898,12 @@ function onValidateResult(payload) {
   if (state._fixValidating) {
     state._fixValidating = false;
     $('fix-apply-btn').disabled = !passed;
+    const fs = $('fix-status');
+    if (fs) {
+      fs.style.display = 'block';
+      fs.style.color = passed ? 'var(--success)' : 'var(--danger)';
+      fs.textContent = passed ? '✓ Fix validated' : `✗ ${error || 'Validation failed'}`;
+    }
     return;
   }
 
@@ -1793,11 +1911,23 @@ function onValidateResult(payload) {
   if (state._pendingStepRunId) {
     const sid = state._pendingStepRunId;
     state._pendingStepRunId = null;
+    state._pendingStepRunStartedAt = 0;
+    if (state._stepRunTicker) {
+      clearInterval(state._stepRunTicker);
+      state._stepRunTicker = null;
+    }
     const step = state.steps.find(s => s.stepId === sid);
     if (step) {
       state._stepRunStates[sid] = passed ? 'pass' : 'fail';
-      if (!passed) step._stepError = error || 'failed';
-      else delete step._stepError;
+      const runMs = durationMs || 0;
+      if (!passed) {
+        const reason = error || 'failed';
+        step._stepError = runMs > 0
+          ? `${reason} (${runMs}ms)`
+          : reason;
+      } else {
+        step._stepError = runMs > 0 ? `passed in ${runMs}ms` : 'passed';
+      }
     }
     renderStepList();
     return;
@@ -1874,6 +2004,7 @@ function appendStepToList(step) {
 
 function renderStepList() {
   const count = state.steps.length;
+  root.classList.toggle('step-run-active', !!state._pendingStepRunId);
   $('steps-count-badge').textContent = `· ${count} step${count !== 1 ? 's' : ''}`;
   $('collapsed-step-count').textContent = count;
   $('sb-steps').textContent = `${count} steps`;
@@ -1900,8 +2031,14 @@ function renderStepList() {
     const badge = inferBadge(step.action);
 
     const stepRunState = state._stepRunStates[step.stepId];
-    const inlineResultHtml = stepRunState === 'pass'
-      ? `<div class="step-inline-result pass">✓ passed</div>`
+    const runElapsedMs = (stepRunState === 'running' && step.stepId === state._pendingStepRunId && state._pendingStepRunStartedAt)
+      ? Date.now() - state._pendingStepRunStartedAt
+      : 0;
+    const runElapsedText = runElapsedMs > 0 ? ` ${Math.floor(runElapsedMs / 1000)}s` : '';
+    const inlineResultHtml = stepRunState === 'running'
+      ? `<div class="step-inline-result running"><span class="spinner" style="margin-right:4px;"></span>running…${runElapsedText}</div>`
+      : stepRunState === 'pass'
+      ? `<div class="step-inline-result pass">✓ ${escHtml(step._stepError || 'passed')}</div>`
       : stepRunState === 'fail'
         ? `<div class="step-inline-result fail">✗ ${escHtml(step._stepError || 'failed')} <span style="color:var(--accent);cursor:pointer;" data-step-fix="${step.stepId}"> Fix →</span></div>`
         : '';
@@ -1920,7 +2057,7 @@ function renderStepList() {
         ${inlineResultHtml}
       </div>
       ${showActions ? `<div class="step-actions">
-        <button class="step-run-btn" title="Run this step" data-run="${step.stepId}"><svg viewBox="0 0 10 10" width="9" height="9" fill="currentColor"><path d="M2 1.5l6 3.5-6 3.5V1.5z"/></svg></button>
+        <button class="step-run-btn" title="Run this step" data-run="${step.stepId}" ${state._pendingStepRunId ? 'disabled' : ''}><svg viewBox="0 0 10 10" width="9" height="9" fill="currentColor"><path d="M2 1.5l6 3.5-6 3.5V1.5z"/></svg></button>
         <button title="Duplicate" data-dup="${step.stepId}"><svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="3" width="7" height="8" rx="1"/><path d="M4 3V2a1 1 0 011-1h5a1 1 0 011 1v8a1 1 0 01-1 1H9"/></svg></button>
         <button class="del" title="Delete" data-del="${step.stepId}"><svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor"><path d="M4 1h4l1 1H3L4 1zM2 3h8l-.7 6.5a1 1 0 01-1 .5H3.7a1 1 0 01-1-.5L2 3z"/></svg></button>
       </div>` : ''}`;
@@ -1937,11 +2074,13 @@ function renderStepList() {
         const s = state.steps.find(st => st.stepId === fix.dataset.stepFix);
         if (s) {
           state.failingStepId = s.stepId;
-          $('fix-editor').classList.add('show');
           $('fix-locator-input').value = s.locator || '';
           $('fix-param-input').value = (s.params && s.params.text) || '';
+          $('fix-timeout-input').value = (s.params && s.params.timeoutMs) ? String(s.params.timeoutMs) : '';
+          const fs = $('fix-status');
+          if (fs) { fs.style.display = 'none'; fs.textContent = ''; }
           $('fix-apply-btn').disabled = true;
-          $('fix-editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          setRepairMode('manual', { scroll: true });
         }
         return;
       }
@@ -1988,9 +2127,17 @@ function inferBadge(action) {
 
 // ── Per-step run ──────────────────────────────────────────────────────────────
 function runSingleStep(stepId) {
+  if (state._pendingStepRunId) return;
   const step = state.steps.find(s => s.stepId === stepId);
   if (!step) return;
   state._stepRunStates[stepId] = 'running';
+  state._pendingStepRunId = stepId;
+  state._pendingStepRunStartedAt = Date.now();
+  if (state._stepRunTicker) clearInterval(state._stepRunTicker);
+  state._stepRunTicker = setInterval(() => {
+    if (!state._pendingStepRunId) return;
+    renderStepList();
+  }, 1000);
   renderStepList();
   send({ type: 'validate_step', payload: {
     action: step.action,
@@ -1998,8 +2145,6 @@ function runSingleStep(stepId) {
     params: step.params || {},
     _forStepId: stepId,
   }});
-  // Track that we're waiting for a per-step result
-  state._pendingStepRunId = stepId;
 }
 
 // ── Replay controls (static buttons wired once) ───────────────────────────────
@@ -2013,8 +2158,7 @@ $('stop-replay-btn').addEventListener('click', stopReplay);
 
 $('resume-btn').addEventListener('click', () => {
   state.replayStatus = 'running';
-  $('fix-editor').classList.remove('show');
-  $('failure-panel').classList.remove('show');
+  setRepairMode('none');
   send({ type: 'resume', payload: {} });
   setPanelMode('replaying');
   updateReplayStatusBar('running', null, null);
@@ -2023,18 +2167,31 @@ $('resume-btn').addEventListener('click', () => {
 $('stop-failed-btn').addEventListener('click', stopReplay);
 
 // ── Failure panel button handlers ─────────────────────────────────────────────
-$('fp-autofix-btn').addEventListener('click', () => {
-  if (!state.failingStepId) return;
+function startAutoFixFlow() {
+  if (!state.failingStepId) {
+    setAutoFixStatus('Cannot start Auto-fix: no failing step is selected.', 'error');
+    return;
+  }
+  setAutoFixStatus('Starting Auto-fix… sending request to runner.', 'running');
   state.forceFixActive = true;
-  $('cascade-wrap').classList.add('show');
-  $('fix-editor').classList.remove('show');
+  state.proposedRepairLocator = null;
   resetCascadeStages();
   $('cascade-spinner').style.display = '';
-  $('cascade-title').textContent = 'Auto-fix running…';
+  $('cascade-title').textContent = 'Auto-fix running… checking current locator';
   $('cascade-progress').style.width = '0%';
   $('llm-result-box').classList.remove('show');
-  send({ type: 'force_fix', payload: { stepId: state.failingStepId } });
-});
+  const override = getFixOverride();
+  const sent = send({ type: 'force_fix', payload: { stepId: state.failingStepId, ...override } });
+  if (!sent) {
+    state.forceFixActive = false;
+    setAutoFixStatus('Cannot start Auto-fix: panel is disconnected from the runner.', 'error');
+    return;
+  }
+  setRepairMode('autoFix', { scroll: true });
+}
+
+$('fp-autofix-btn').addEventListener('click', startAutoFixFlow);
+$('fix-autofix-btn').addEventListener('click', startAutoFixFlow);
 
 $('fp-add-step-btn').addEventListener('click', () => {
   state.insertAfterStepId = state.failingStepId;
@@ -2042,21 +2199,51 @@ $('fp-add-step-btn').addEventListener('click', () => {
   $('manual-mode').style.display = '';
   $('manual-mode').classList.add('open');
   $('manual-mode').querySelector('.pw-manual-hint').textContent = 'collapse';
-  setTimeout(() => $('manual-mode').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+  setTimeout(() => safeScrollIntoView($('manual-mode')), 50);
 });
 
 $('fp-resume-btn').addEventListener('click', () => {
   state.replayStatus = 'running';
   send({ type: 'resume', payload: {} });
-  $('failure-panel').classList.remove('show');
+  setRepairMode('none');
   setPanelMode('replaying');
   updateReplayStatusBar('running', null, null);
 });
 
 $('cascade-cancel').addEventListener('click', () => {
-  $('cascade-wrap').classList.remove('show');
+  state.proposedRepairLocator = null;
+  setAutoFixStatus('');
+  setRepairMode(state.panelMode === 'edit' ? 'manual' : state.failingStepId ? 'failed' : 'none');
   state.forceFixActive = false;
 });
+
+function getFixOverride() {
+  const step = state.steps.find(s => s.stepId === state.failingStepId);
+  const editedLocator = state.repairMode === 'manual' ? $('fix-locator-input').value.trim() : '';
+  const locator = editedLocator || (step && step.locator) || '';
+  const timeoutMs = Number($('fix-timeout-input').value);
+  const paramVal = $('fix-param-input').value;
+  const params = { ...((step && step.params) || {}) };
+  if (paramVal) {
+    params.text = paramVal;
+    params.value = paramVal;
+  }
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) params.timeoutMs = timeoutMs;
+  return {
+    primarySelector: locator,
+    params,
+  };
+}
+
+function closeFixSurface() {
+  state.proposedRepairLocator = null;
+  state.forceFixActive = false;
+  setAutoFixStatus('');
+  const fs = $('fix-status');
+  if (fs) { fs.style.display = 'none'; fs.textContent = ''; }
+  $('fix-apply-btn').disabled = true;
+  setRepairMode(state.panelMode === 'failed' && state.failingStepId ? 'failed' : 'none');
+}
 
 function onStepStatus(payload) {
   const { stepId, status, error } = payload;
@@ -2065,6 +2252,7 @@ function onStepStatus(payload) {
   if (status === 'failed') {
     state.failingStepId = stepId;
     state.replayStatus = 'failed';
+    setAutoFixStatus('');
     updateReplayStatusBar('failed', stepId, error);
     showFailurePanel(stepId, error);
     setPanelMode('failed');
@@ -2095,8 +2283,15 @@ function onRunCompleted() {
   $('sb-last-run').textContent = 'Last run: all passed';
   $('sb-last-run').className = 'status-item ok';
   setTimeout(() => {
-    if (state.replayStatus === 'idle') stopReplay();
+    if (state.replayStatus === 'idle') stopReplay({ notifyBackend: false });
   }, 2000);
+}
+
+function onRunAborted() {
+  state.replayStatus = 'idle';
+  state.failingStepId = null;
+  $('sb-last-run').textContent = 'Last run: stopped';
+  $('sb-last-run').className = 'status-item warn';
 }
 
 function updateReplayControls() {
@@ -2111,21 +2306,38 @@ $('fix-validate-btn').addEventListener('click', () => {
   const locator = $('fix-locator-input').value.trim();
   const step = state.steps.find(s => s.stepId === state.failingStepId);
   if (!locator || !step) return;
+  const timeoutRaw = $('fix-timeout-input').value;
+  const timeoutMs = Number(timeoutRaw);
+  const params = { ...(step.params || {}) };
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) params.timeoutMs = timeoutMs;
   state._fixValidating = true;
+  const fs = $('fix-status');
+  if (fs) {
+    fs.style.display = 'block';
+    fs.style.color = 'var(--info)';
+    fs.textContent = 'Validating fix…';
+  }
   $('fix-apply-btn').disabled = true;
-  send({ type: 'validate_step', payload: { action: step.action, locator, params: step.params || {} } });
+  send({ type: 'validate_step', payload: { action: step.action, locator, params } });
 });
 
 $('fix-apply-btn').addEventListener('click', () => {
   const locator = $('fix-locator-input').value.trim();
   if (!locator) return;
   const paramVal = $('fix-param-input').value;
-  send({ type: 'resume', payload: { overrideStep: { stepId: state.failingStepId, locator, params: paramVal ? { text: paramVal, value: paramVal } : undefined } } });
-  $('fix-editor').classList.remove('show');
+  const timeoutRaw = $('fix-timeout-input').value;
+  const timeoutMs = Number(timeoutRaw);
+  let params = undefined;
+  if (paramVal) params = { text: paramVal, value: paramVal };
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) params = { ...(params || {}), timeoutMs };
+  send({ type: 'resume', payload: { overrideStep: { stepId: state.failingStepId, locator, params } } });
+  setRepairMode('none');
   state.replayStatus = 'running';
   setPanelMode('replaying');
   updateReplayStatusBar('running', null, null);
 });
+
+$('fix-close-btn').addEventListener('click', closeFixSurface);
 
 // ── Force-fix progress ────────────────────────────────────────────────────────
 function onForceFixProgress(payload) {
@@ -2146,14 +2358,13 @@ function onForceFixProgress(payload) {
 
   if (repaired) {
     state.forceFixActive = false;
+    state.proposedRepairLocator = locator || null;
+    setAutoFixStatus('');
     $('cascade-spinner').style.display = 'none';
     $('cascade-title').textContent = `Fixed — confirm to resume`;
     $('cascade-title').style.color = 'var(--success)';
-    const step = state.steps.find(s => s.stepId === state.failingStepId);
-    if (step && locator) { step.locator = locator; step._uiStatus = 'paused'; renderStepList(); }
     // Always show the confirm box so user can Apply & Resume
-    const lb = $('llm-result-box');
-    lb.classList.add('show');
+    setRepairMode('llmResult', { scroll: true });
     $('llm-result-label').textContent = `Found working locator (stage ${stage})`;
     $('llm-result-txt').textContent = explanation || 'A working locator was found. Apply it and resume replay.';
     if (locator) {
@@ -2161,11 +2372,13 @@ function onForceFixProgress(payload) {
       $('llm-selector-display').style.display = 'block';
     }
     $('accept-repair-btn').textContent = 'Apply & Resume';
+    $('accept-repair-btn').disabled = !locator;
+    $('close-repair-btn').textContent = state.panelMode === 'edit' ? 'Close' : 'Back';
   }
 
   if (stage === 4 && explanation) {
-    const lb = $('llm-result-box');
-    lb.classList.add('show');
+    setRepairMode('llmResult', { scroll: true });
+    if (!repaired) $('llm-result-label').textContent = 'LLM response';
     $('llm-result-txt').textContent = explanation;
     if (locator) {
       $('llm-selector-display').textContent = locator;
@@ -2174,7 +2387,13 @@ function onForceFixProgress(payload) {
       $('llm-selector-display').style.display = 'none';
     }
     $('cascade-spinner').style.display = 'none';
-    if (!repaired) $('cascade-title').textContent = 'Force-fix — LLM response';
+    if (!repaired) {
+      state.proposedRepairLocator = null;
+      setAutoFixStatus('');
+      $('accept-repair-btn').disabled = true;
+      $('cascade-title').textContent = 'Force-fix — LLM response';
+      $('close-repair-btn').textContent = 'Back';
+    }
   }
 
   if (stage === 4 && status === 'fail' && !explanation) {
@@ -2182,27 +2401,48 @@ function onForceFixProgress(payload) {
     $('cascade-title').textContent = 'Force-fix exhausted — manual fix required';
     $('cascade-title').style.color = 'var(--fg-3)';
     state.forceFixActive = false;
+    state.proposedRepairLocator = null;
+    setAutoFixStatus('');
+    setRepairMode('llmResult', { scroll: true });
+    $('llm-result-label').textContent = 'No automatic repair';
+    $('llm-result-txt').textContent = 'Auto-fix could not find a working locator. Use Manual fix to edit and validate this step.';
+    $('llm-selector-display').style.display = 'none';
+    $('accept-repair-btn').disabled = true;
+    $('close-repair-btn').textContent = 'Back';
   }
 }
 
 $('accept-repair-btn').addEventListener('click', () => {
-  const locator = $('llm-selector-display').textContent;
+  const locator = state.proposedRepairLocator || $('llm-selector-display').textContent;
   if (!locator) return;
   send({ type: 'accept_llm_repair', payload: { stepId: state.failingStepId, locator } });
-  $('llm-result-box').classList.remove('show');
-  $('cascade-wrap').classList.remove('show');
+  setAutoFixStatus('');
+  setRepairMode('none');
   // Resume replay with the repaired locator
   state.replayStatus = 'running';
-  send({ type: 'resume', payload: {} });
+  send({ type: 'resume', payload: { overrideStep: { stepId: state.failingStepId, locator } } });
   setPanelMode('replaying');
   updateReplayStatusBar('running', null, null);
 });
 
 $('try-manual-btn').addEventListener('click', () => {
-  $('llm-result-box').classList.remove('show');
-  $('cascade-wrap').classList.remove('show');
-  $('fix-editor').classList.add('show');
+  const step = state.steps.find(s => s.stepId === state.failingStepId);
+  if (state.proposedRepairLocator) $('fix-locator-input').value = state.proposedRepairLocator;
+  else if (step) $('fix-locator-input').value = step.locator || '';
+  if (step) {
+    $('fix-param-input').value = (step.params && step.params.text) || '';
+    $('fix-timeout-input').value = (step.params && step.params.timeoutMs) ? String(step.params.timeoutMs) : '';
+  }
+  setRepairMode('manual', { scroll: true });
+  setAutoFixStatus('');
   state.forceFixActive = false;
+});
+
+$('close-repair-btn').addEventListener('click', () => {
+  state.proposedRepairLocator = null;
+  state.forceFixActive = false;
+  setAutoFixStatus('');
+  setRepairMode(state.panelMode === 'failed' && state.failingStepId ? 'failed' : 'none');
 });
 
 function resetCascadeStages() {
@@ -2212,6 +2452,13 @@ function resetCascadeStages() {
     if (res) { res.className = 'stage-result'; res.textContent = ''; }
   });
   $('cascade-title').style.color = '';
+  $('accept-repair-btn').disabled = true;
+  $('accept-repair-btn').textContent = 'Apply & Resume';
+  $('close-repair-btn').textContent = 'Close';
+  $('llm-result-label').textContent = 'LLM Response';
+  $('llm-selector-display').style.display = 'none';
+  $('llm-selector-display').textContent = '';
+  $('llm-result-txt').textContent = '';
 }
 
 // ── Save / Load ───────────────────────────────────────────────────────────────
@@ -2420,6 +2667,8 @@ setPanelMode('edit');
 updateLlmBanner();
 setWorkflowStage('record');
 connectWs();
+updateStickyOffsets();
+window.addEventListener('resize', updateStickyOffsets);
 
 })();
 </script>

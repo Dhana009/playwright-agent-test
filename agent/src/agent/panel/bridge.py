@@ -1,7 +1,6 @@
 """Panel bridge — aiohttp WebSocket server connecting the injected panel JS to the Python runner."""
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -22,6 +21,7 @@ MSG_APPEND_STEP = "append_step"
 MSG_DELETE_STEP = "delete_step"
 MSG_DUPLICATE_STEP = "duplicate_step"
 MSG_REPLAY = "replay"
+MSG_STOP_REPLAY = "stop_replay"
 MSG_PAUSE_REQUEST = "pause_request"
 MSG_RESUME = "resume"
 MSG_FIX = "fix"
@@ -175,7 +175,12 @@ class PanelBridge:
     async def _dispatch(self, msg: dict[str, Any]) -> None:
         msg_type = msg.get("type", "")
         payload = msg.get("payload", {})
-        for handler in self._handlers.get(msg_type, []):
+        handlers = self._handlers.get(msg_type, [])
+        logger.debug("panel_message_received type=%s has_handler=%s", msg_type, bool(handlers))
+        if not handlers:
+            logger.warning("panel_message_unhandled type=%s", msg_type)
+            return
+        for handler in handlers:
             try:
                 await handler({"type": msg_type, "payload": payload})
             except Exception as exc:

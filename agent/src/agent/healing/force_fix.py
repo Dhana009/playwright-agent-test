@@ -46,7 +46,7 @@ async def verify_llm_connection(llm_provider: Any) -> tuple[bool, str]:
         if "429" in err or "rate_limit" in err.lower():
             return False, "Rate limited — try again in a moment"
         if "model" in err.lower() and "not found" in err.lower():
-            return False, f"Model not found — check model name"
+            return False, "Model not found — check model name"
         if "connect" in err.lower() or "network" in err.lower() or "timeout" in err.lower():
             return False, "Network error — check your connection"
         return False, f"LLM error: {err[:120]}"
@@ -127,7 +127,13 @@ async def run_force_fix_cascade(
     # ── Stage 4: LLM ─────────────────────────────────────────────────────
     if llm_provider is None:
         logger.info("force_fix_no_llm step_id=%s", step_id)
-        return ForceFixResult(repaired=False, stage=3, candidates_tried=tried)
+        explanation = (
+            "Auto-fix tried waiting, fallback selectors, and semantic alternates, "
+            "but none matched a visible element. LLM repair is not configured, so "
+            "there is no stage 4 diagnosis available. Configure an LLM or use Manual fix."
+        )
+        await notify(4, "fail", explanation=explanation)
+        return ForceFixResult(repaired=False, stage=4, explanation=explanation, candidates_tried=tried)
 
     await notify(4, "running")
     try:

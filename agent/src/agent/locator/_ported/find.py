@@ -110,9 +110,6 @@ async def _count_visible(locator, total_count: int) -> int:
         item = locator.nth(index)
         if await item.is_visible():
             visible_count += 1
-    if total_count > sample_size:
-        remaining = total_count - sample_size
-        visible_count += remaining
     return visible_count
 
 
@@ -122,8 +119,6 @@ async def _first_visible_locator(locator, total_count: int):
         item = locator.nth(index)
         if await item.is_visible():
             return item
-    if total_count > sample_size:
-        return locator.first
     return None
 
 
