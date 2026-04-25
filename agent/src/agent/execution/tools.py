@@ -517,6 +517,41 @@ class ToolRuntime:
                     "selectorAttempt": use_target,
                 }
 
+                # Check if the locator is a non-input element (div, button, label, etc.)
+                # If so, try file chooser FIRST — these widgets are click-driven and setInputFiles
+                # on their associated hidden input won't trigger the widget's UI update.
+                is_non_input = False
+                try:
+                    if await locator.count() > 0:
+                        tag = await locator.first.evaluate("el => el.tagName.toLowerCase()")
+                        is_non_input = tag not in ("input", "textarea", "select")
+                except Exception:
+                    pass
+
+                if is_non_input:
+                    fc_timeout = min(float(timeout_ms), 20_000.0)
+                    click_timeout = min(float(timeout_ms), 15_000.0)
+                    for force in (False, True):
+                        try:
+                            async with page.expect_file_chooser(timeout=fc_timeout) as fc_info:
+                                await locator.scroll_into_view_if_needed(timeout=click_timeout)
+                                await locator.click(timeout=click_timeout, force=force)
+                            chooser = await fc_info.value
+                            await chooser.set_files(normalized_paths)
+                            return InteractionResult(
+                                tool="upload",
+                                tabId=tab_id,
+                                framePath=frame_path,
+                                target=target,
+                                details={
+                                    **base_details,
+                                    "uploadMethod": "fileChooser" if not force else "fileChooser_force",
+                                },
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                    # File chooser didn't work for this non-input — fall through to setInputFiles strategies
+
                 # Custom upload UIs: map trigger → real <input type=file> (in-page).
                 try:
                     if await locator.count() > 0:
@@ -527,6 +562,12 @@ class ToolRuntime:
                                 file_loc = frame.locator(cand).first
                                 if await file_loc.count() > 0:
                                     await file_loc.set_input_files(normalized_paths, timeout=timeout_ms)
+                                    # Fire change + input events so React/custom widgets update their UI.
+                                    try:
+                                        await file_loc.first.dispatch_event("change")
+                                        await file_loc.first.dispatch_event("input")
+                                    except Exception:
+                                        pass
                                     return InteractionResult(
                                         tool="upload",
                                         tabId=tab_id,
@@ -543,12 +584,22 @@ class ToolRuntime:
 
                 try:
                     await locator.set_input_files(normalized_paths, timeout=timeout_ms)
+                    try:
+                        await locator.dispatch_event("change")
+                        await locator.dispatch_event("input")
+                    except Exception:
+                        pass
                 except Exception:
                     inner = locator.locator('input[type="file"],input[type=file]').first
                     try:
                         if await inner.count() > 0:
                             await inner.set_input_files(normalized_paths, timeout=timeout_ms)
                             upload_method = "nested_file_input"
+                            try:
+                                await inner.dispatch_event("change")
+                                await inner.dispatch_event("input")
+                            except Exception:
+                                pass
                         else:
                             raise LookupError("no nested file input under locator")
                     except Exception:
@@ -556,6 +607,11 @@ class ToolRuntime:
                         if assoc is not None:
                             await assoc.set_input_files(normalized_paths, timeout=timeout_ms)
                             upload_method = "ancestor_file_input"
+                            try:
+                                await assoc.dispatch_event("change")
+                                await assoc.dispatch_event("input")
+                            except Exception:
+                                pass
                         else:
                             fc_timeout = min(float(timeout_ms), 20_000.0)
                             click_timeout = min(float(timeout_ms), 15_000.0)

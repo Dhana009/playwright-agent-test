@@ -24,6 +24,7 @@ from agent.panel.bridge import (
     MSG_FORCE_FIX,
     MSG_LIST_VERSIONS,
     MSG_LOAD_VERSION,
+    MSG_LLM_ASSIST,
     MSG_PAUSE_REQUEST,
     MSG_PICK_CANCEL,
     MSG_PICK_START,
@@ -34,6 +35,7 @@ from agent.panel.bridge import (
     MSG_START_RECORDING,
     MSG_STOP_REPLAY,
     MSG_STOP_RECORDING,
+    MSG_UPLOAD_FIX,
     MSG_VALIDATE_STEP,
     PanelBridge,
 )
@@ -171,6 +173,8 @@ async def _run_panel(
     bridge.on(MSG_SET_LLM_MODE, state.handle_set_llm_mode)
     bridge.on(MSG_START_RECORDING, state.handle_start_recording)
     bridge.on(MSG_STOP_RECORDING, state.handle_stop_recording)
+    bridge.on(MSG_UPLOAD_FIX, state.handle_upload_fix)
+    bridge.on(MSG_LLM_ASSIST, state.handle_llm_assist)
     bridge.on("set_llm_config", state.handle_set_llm_config)
 
     # Send full state when panel tab reconnects (close/reopen)
@@ -247,6 +251,9 @@ class _PanelState:
         self._llm_verified: bool | None = None
         self._llm_verify_message: str = ""
         self._llm_verify_task: asyncio.Task[None] | None = None
+
+        # Upload fix state: stepId -> UploadFixState
+        self._upload_fix_states: dict[str, Any] = {}
 
         # Auto-recording state
         self._recording_active = False
@@ -366,10 +373,15 @@ class _PanelState:
         repair_step_id = repair_context.get("stepId")
 
         start_ms = int(time.time() * 1000)
+        extra: dict[str, Any] = {}
         try:
             await self._suspend_auto_capture()
             try:
-                await self._execute_action(action, locator, params)
+                result = await self._execute_action(action, locator, params)
+                if result and hasattr(result, "details") and result.details:
+                    upload_method = result.details.get("uploadMethod")
+                    if upload_method:
+                        extra["uploadMethod"] = upload_method
             finally:
                 await self._resume_auto_capture()
             duration_ms = int(time.time() * 1000) - start_ms
@@ -381,9 +393,14 @@ class _PanelState:
                         "locator": locator or "",
                         "passed": True,
                         "durationMs": duration_ms,
+                        **extra,
                     },
                 )
-            await self.bridge.broadcast_validate_result(passed=True, duration_ms=duration_ms)
+            await self.bridge.broadcast_validate_result(
+                passed=True, duration_ms=duration_ms,
+                repair_context=repair_context or None,
+                extra=extra or None,
+            )
         except Exception as exc:
             duration_ms = int(time.time() * 1000) - start_ms
             if repair_step_id:
@@ -398,7 +415,8 @@ class _PanelState:
                     },
                 )
             await self.bridge.broadcast_validate_result(
-                passed=False, error=_friendly_error(str(exc)), duration_ms=duration_ms
+                passed=False, error=_friendly_error(str(exc)), duration_ms=duration_ms,
+                repair_context=repair_context or None,
             )
 
     # ── Append step ───────────────────────────────────────────────────────
@@ -717,6 +735,306 @@ class _PanelState:
                     object.__setattr__(s, "target", bundle)
                 break
 
+    # ── LLM Assist ───────────────────────────────────────────────────────
+
+    async def handle_llm_assist(self, msg: dict[str, Any]) -> None:
+        """
+        LLM Assist — multi-attempt repair loop.
+
+        One LLM call returns up to 3 ordered attempts (each with exact strategy+locator+js_code).
+        System tries them one by one automatically; stops at first success.
+        All sub-attempt results (including exact errors) feed back to the panel and into the
+        next LLM call so the LLM knows exactly what was tried and what broke.
+        """
+        from agent.healing.llm_assist import execute_llm_strategy, run_llm_assist_iteration
+
+        payload = msg.get("payload", {})
+        step_id = payload.get("stepId", "")
+        issue = (payload.get("issue") or "").strip()
+        picked_locator = payload.get("pickedLocator") or None
+        iteration_history = payload.get("iterationHistory") or []
+
+        if not step_id:
+            await self.bridge.broadcast_llm_assist_result(
+                step_id="", iteration=0, status="error",
+                explanation="No stepId provided.",
+            )
+            return
+
+        step = next((s for s in self.step_graph.steps if s.step_id == step_id), None)
+        if not step:
+            await self.bridge.broadcast_llm_assist_result(
+                step_id=step_id, iteration=0, status="error",
+                explanation=f"Step {step_id} not found.",
+            )
+            return
+
+        if not self.llm_provider:
+            await self.bridge.broadcast_llm_assist_result(
+                step_id=step_id, iteration=0, status="error",
+                explanation="LLM not configured. Go to Settings to add an API key.",
+            )
+            return
+
+        round_num = len(iteration_history) + 1
+        logger.info("llm_assist_round step_id=%s round=%d", step_id, round_num)
+
+        meta_params = step.metadata.get("params") or {}
+        if step.action == "upload" and not meta_params.get("file_paths") and not meta_params.get("path") and not meta_params.get("text"):
+            fp = step.metadata.get("filePaths") or step.metadata.get("file_paths")
+            if fp:
+                meta_params = dict(meta_params)
+                meta_params["file_paths"] = fp
+
+        step_dict = {
+            "action": step.action,
+            "locator": step.metadata.get("locator") or (step.target.primary_selector if step.target else ""),
+            "params": meta_params,
+        }
+
+        # Global iteration counter across all sub-attempts (for panel card numbering)
+        next_iter_num = max((it.get("iteration", 0) for it in iteration_history), default=0) + 1
+
+        try:
+            # ── Phase 1: LLM analyses and returns ordered attempts ────────────
+            llm_result = await run_llm_assist_iteration(
+                self.page,
+                step=step_dict,
+                issue=issue,
+                picked_locator=picked_locator,
+                iteration_history=iteration_history,
+                llm_provider=self.llm_provider,
+            )
+
+            diagnosis = llm_result.get("diagnosis") or ""
+            attempts = llm_result.get("attempts") or []
+            captured_dom = llm_result.get("capturedDom") or ""
+
+            logger.info("llm_assist_plan round=%d diagnosis=%r attempts=%d",
+                        round_num, diagnosis[:80], len(attempts))
+
+            # ── Phase 2: Try each attempt in order; stop at first success ─────
+            await self._suspend_auto_capture()
+            winning_attempt: dict[str, Any] | None = None
+            try:
+                for attempt_idx, attempt in enumerate(attempts):
+                    strategy = attempt.get("strategy") or "locator_fix"
+                    locator = attempt.get("locator") or step_dict["locator"]
+                    js_code = attempt.get("js_code")
+                    rationale = attempt.get("rationale") or ""
+                    iter_num = next_iter_num + attempt_idx
+
+                    logger.info("llm_assist_attempt round=%d attempt=%d/%d strategy=%r locator=%r",
+                                round_num, attempt_idx + 1, len(attempts), strategy, locator)
+
+                    # Tell the panel we're about to run this specific attempt
+                    await self.bridge.broadcast_llm_assist_result(
+                        step_id=step_id,
+                        iteration=iter_num,
+                        status="executing",
+                        diagnosis=diagnosis,
+                        action=f"[{attempt_idx+1}/{len(attempts)}] {rationale}",
+                        locator=locator,
+                        captured_dom=captured_dom if attempt_idx == 0 else "",
+                    )
+
+                    exec_result = await execute_llm_strategy(
+                        self.page,
+                        strategy=strategy,
+                        locator=locator,
+                        js_code=js_code,
+                        action=step.action,
+                        params=meta_params,
+                        tool_runtime=self.tool_runtime,
+                        tab_id=self.tab_id,
+                        timeout_ms=20_000,
+                    )
+
+                    success = exec_result.get("success", False)
+                    exec_error = exec_result.get("error") or ""
+                    exec_detail = exec_result.get("exec_detail") or ""
+                    upload_method = exec_result.get("upload_method") or ""
+
+                    logger.info("llm_assist_attempt_result round=%d attempt=%d success=%s error=%r",
+                                round_num, attempt_idx + 1, success, exec_error[:80])
+
+                    self._append_repair_history(step_id, {
+                        "kind": "llm_assist",
+                        "iteration": iter_num,
+                        "strategy": strategy,
+                        "locator": locator,
+                        "diagnosis": diagnosis,
+                        "plan": rationale,
+                        "success": success,
+                        "error": exec_error,
+                        "exec_detail": exec_detail,
+                        "upload_method": upload_method,
+                    })
+
+                    exec_status = "exec_passed" if success else "exec_failed"
+                    await self.bridge.broadcast_llm_assist_result(
+                        step_id=step_id,
+                        iteration=iter_num,
+                        status=exec_status,
+                        diagnosis=diagnosis,
+                        action=f"[{attempt_idx+1}/{len(attempts)}] {rationale}",
+                        locator=locator,
+                        captured_dom=captured_dom if attempt_idx == 0 else "",
+                        exec_error=exec_error,
+                        exec_detail=exec_detail,
+                        upload_method=upload_method,
+                    )
+
+                    if success:
+                        winning_attempt = attempt
+                        winning_attempt["iter_num"] = iter_num
+                        break
+                    # Failed — continue to next attempt automatically (no user click)
+
+            finally:
+                await self._resume_auto_capture()
+
+            # ── Phase 3: Report final outcome ─────────────────────────────────
+            if winning_attempt:
+                # One of the attempts worked — panel already showed exec_passed,
+                # user now confirms visually (handled by panel UI)
+                logger.info("llm_assist_round_success round=%d iter=%d strategy=%r",
+                            round_num, winning_attempt["iter_num"], winning_attempt.get("strategy"))
+            else:
+                # All attempts failed — panel auto-loops to next LLM round
+                logger.info("llm_assist_round_all_failed round=%d attempts=%d", round_num, len(attempts))
+
+        except Exception as exc:
+            logger.error("llm_assist_error step_id=%s error=%s", step_id, str(exc))
+            await self.bridge.broadcast_llm_assist_result(
+                step_id=step_id, iteration=next_iter_num, status="error",
+                explanation=f"LLM Assist error: {str(exc)[:200]}",
+            )
+
+    # ── Upload Fix ────────────────────────────────────────────────────────
+
+    async def handle_upload_fix(self, msg: dict[str, Any]) -> None:
+        """User-triggered LLM iteration for a silently-failing upload step."""
+        from agent.healing.upload_fix import (
+            UploadFixIteration,
+            UploadFixState,
+            execute_upload_fix_strategy,
+            run_upload_fix_iteration,
+        )
+
+        payload = msg.get("payload", {})
+        step_id = payload.get("stepId", "")
+        outcome_of_last = payload.get("outcomeOfLast")  # "worked" | "failed" | None (first call)
+        error_of_last = payload.get("errorOfLast", "")
+
+        if not step_id:
+            await self.bridge.broadcast_upload_fix_result(
+                step_id="", iteration=0, status="error",
+                explanation="No stepId provided.",
+            )
+            return
+
+        step = next((s for s in self.step_graph.steps if s.step_id == step_id), None)
+        if not step:
+            await self.bridge.broadcast_upload_fix_result(
+                step_id=step_id, iteration=0, status="error",
+                explanation=f"Step {step_id} not found.",
+            )
+            return
+
+        if not self.llm_provider or not self.llm_enabled:
+            await self.bridge.broadcast_upload_fix_result(
+                step_id=step_id, iteration=0, status="error",
+                explanation="LLM not configured. Enable LLM in settings first.",
+            )
+            return
+
+        locator = step.metadata.get("locator") or ""
+        params = step.metadata.get("params") or {}
+        file_path = params.get("path") or params.get("file_paths") or params.get("text") or ""
+
+        if not file_path:
+            await self.bridge.broadcast_upload_fix_result(
+                step_id=step_id, iteration=0, status="error",
+                explanation="No file path found in step params.",
+            )
+            return
+
+        # Get or create state for this step
+        fix_state: UploadFixState = self._upload_fix_states.get(step_id) or UploadFixState(
+            step_id=step_id, locator=locator, file_path=file_path,
+        )
+
+        # Record outcome of previous iteration if provided
+        if outcome_of_last and fix_state.iterations:
+            last = fix_state.iterations[-1]
+            last.outcome = outcome_of_last
+            if outcome_of_last == "failed" and error_of_last:
+                last.error = error_of_last
+
+        self._upload_fix_states[step_id] = fix_state
+
+        iteration_num = len(fix_state.iterations) + 1
+        logger.info("upload_fix_iteration step_id=%s iteration=%d", step_id, iteration_num)
+
+        await self.bridge.broadcast_upload_fix_result(
+            step_id=step_id, iteration=iteration_num, status="thinking",
+            explanation="Analysing upload widget DOM…",
+        )
+
+        try:
+            result = await run_upload_fix_iteration(self.page, state=fix_state, llm_provider=self.llm_provider)
+
+            strategy = result.get("strategy", "other")
+            resolved_locator = result.get("locator") or locator
+            explanation = result.get("explanation", "")
+            js_code = result.get("js_code")
+
+            # Record iteration before execution
+            iteration = UploadFixIteration(
+                iteration=iteration_num,
+                strategy=strategy,
+                explanation=explanation,
+            )
+            fix_state.iterations.append(iteration)
+
+            # Notify panel: LLM answered, now executing
+            await self.bridge.broadcast_upload_fix_result(
+                step_id=step_id, iteration=iteration_num, status="executing",
+                strategy=strategy, explanation=explanation,
+            )
+
+            success, exec_error = await execute_upload_fix_strategy(
+                self.page,
+                strategy=strategy,
+                locator=resolved_locator,
+                file_path=file_path,
+                js_code=js_code,
+                timeout_ms=15_000,
+            )
+
+            if success:
+                iteration.outcome = "worked"
+                await self.bridge.broadcast_upload_fix_result(
+                    step_id=step_id, iteration=iteration_num, status="executed",
+                    strategy=strategy, explanation=explanation,
+                )
+            else:
+                iteration.outcome = "failed"
+                iteration.error = exec_error or "unknown error"
+                await self.bridge.broadcast_upload_fix_result(
+                    step_id=step_id, iteration=iteration_num, status="executed",
+                    strategy=strategy, explanation=explanation,
+                    error=iteration.error,
+                )
+
+        except Exception as exc:
+            logger.error("upload_fix_error step_id=%s iteration=%d error=%s", step_id, iteration_num, str(exc))
+            await self.bridge.broadcast_upload_fix_result(
+                step_id=step_id, iteration=iteration_num, status="error",
+                explanation=f"Upload fix internal error: {str(exc)[:200]}",
+            )
+
     # ── Versions ──────────────────────────────────────────────────────────
 
     async def handle_save_version(self, msg: dict[str, Any]) -> None:
@@ -983,7 +1301,7 @@ class _PanelState:
             if provider_name in ("openai",) and api_key:
                 os.environ["OPENAI_API_KEY"] = api_key
                 from agent.llm.openai import OpenAIProvider
-                new_provider = OpenAIProvider(default_model=default_model or "gpt-4o")
+                new_provider = OpenAIProvider(default_model=default_model or "gpt-5.4-mini-2026-03-17")
             elif provider_name in ("anthropic", "claude") and api_key:
                 os.environ["ANTHROPIC_API_KEY"] = api_key
                 from agent.llm.anthropic import AnthropicProvider
@@ -1110,8 +1428,8 @@ class _PanelState:
         action: str,
         locator: str | None,
         params: dict[str, Any],
-    ) -> None:
-        """Execute a single action against the live page via the tool runtime."""
+    ) -> Any:
+        """Execute a single action against the live page via the tool runtime. Returns tool result if available."""
         tab_id = self.tab_id
         t = action.replace("-", "_")
         text = params.get("text") or params.get("value") or ""
@@ -1148,7 +1466,10 @@ class _PanelState:
             await self.tool_runtime.select(tab_id=tab_id, target=_require(locator, "select"), value=text, timeout_ms=timeout_ms)
         elif t == "upload":
             path = params.get("path") or params.get("file_paths") or text
-            await self.tool_runtime.upload(tab_id=tab_id, target=_require(locator, "upload"), file_paths=path, timeout_ms=timeout_ms)
+            upload_result = await self.tool_runtime.upload(tab_id=tab_id, target=_require(locator, "upload"), file_paths=path, timeout_ms=timeout_ms)
+            upload_method = (upload_result.details or {}).get("uploadMethod", "") if upload_result else ""
+            logger.info("upload_execute_method locator=%r method=%r", locator, upload_method)
+            return upload_result
         elif t == "navigate":
             url = params.get("url") or text
             if not url:
@@ -1259,11 +1580,19 @@ def _infer_mode(action: str) -> StepMode:
 
 
 def _step_to_dict(step: Step, locator: str | None, params: dict[str, Any] | None) -> dict[str, Any]:
+    base_params = params or step.metadata.get("params") or {}
+    # For upload steps, ensure file_paths is always in params so validate works correctly.
+    # Auto-recorded upload steps store paths in metadata["filePaths"], not metadata["params"].
+    if step.action == "upload" and not base_params.get("file_paths") and not base_params.get("path") and not base_params.get("text"):
+        fp = step.metadata.get("filePaths") or step.metadata.get("file_paths")
+        if fp:
+            base_params = dict(base_params)
+            base_params["file_paths"] = fp
     return {
         "stepId": step.step_id,
         "action": step.action,
         "locator": locator or (step.target.primary_selector if step.target else None),
-        "params": params or step.metadata.get("params") or {},
+        "params": base_params,
         "mode": step.mode.value,
         "_uiStatus": "pending",
     }
@@ -1313,7 +1642,7 @@ def _try_load_llm_provider() -> Any | None:
             from agent.llm.anthropic import AnthropicProvider
             return AnthropicProvider(default_model=default_model)
         if provider_name.lower() in ("openai",):
-            default_model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+            default_model = os.environ.get("OPENAI_MODEL", "gpt-5.4-mini-2026-03-17")
             from agent.llm.openai import OpenAIProvider
             return OpenAIProvider(default_model=default_model)
         if provider_name.lower() in ("openai_compatible", "compatible"):
@@ -1350,7 +1679,7 @@ def _persist_llm_config(provider: str, api_key: str, model: str, api_base: str) 
 
 
 def _load_persisted_llm_config() -> None:
-    """Load persisted LLM config into env vars if env vars not already set."""
+    """Load persisted LLM config into env vars, always overriding stale env values."""
     import os
 
     config_path = Path.home() / ".agent" / "llm_config.json"
@@ -1361,17 +1690,18 @@ def _load_persisted_llm_config() -> None:
     except Exception:
         return
     provider = data.get("provider", "")
-    if provider and not os.environ.get("AGENT_LLM_PROVIDER"):
+    # Always write provider — persisted file is the source of truth
+    if provider:
         os.environ["AGENT_LLM_PROVIDER"] = provider
     if data.get("api_key"):
-        if provider in ("openai", "openai_compatible", "compatible") and not os.environ.get("OPENAI_API_KEY"):
+        if provider in ("openai", "openai_compatible", "compatible"):
             os.environ["OPENAI_API_KEY"] = data["api_key"]
-        elif provider in ("anthropic", "claude") and not os.environ.get("ANTHROPIC_API_KEY"):
+        elif provider in ("anthropic", "claude"):
             os.environ["ANTHROPIC_API_KEY"] = data["api_key"]
     if data.get("model"):
-        if provider in ("openai", "openai_compatible", "compatible") and not os.environ.get("OPENAI_MODEL"):
+        if provider in ("openai", "openai_compatible", "compatible"):
             os.environ["OPENAI_MODEL"] = data["model"]
-        elif provider in ("anthropic", "claude") and not os.environ.get("ANTHROPIC_MODEL"):
+        elif provider in ("anthropic", "claude"):
             os.environ["ANTHROPIC_MODEL"] = data["model"]
-    if data.get("api_base") and not os.environ.get("OPENAI_API_BASE"):
+    if data.get("api_base"):
         os.environ["OPENAI_API_BASE"] = data["api_base"]

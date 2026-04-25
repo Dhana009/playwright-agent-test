@@ -34,6 +34,8 @@ MSG_SET_LLM_MODE = "set_llm_mode"
 MSG_START_RECORDING = "start_recording"
 MSG_STOP_RECORDING = "stop_recording"
 MSG_DELETE_VERSION = "delete_version"
+MSG_UPLOAD_FIX = "upload_fix"
+MSG_LLM_ASSIST = "llm_assist"
 
 # ── Message types (Python → JS) ────────────────────────────────────────────
 MSG_PICK_RESULT = "pick_result"
@@ -48,6 +50,8 @@ MSG_STEP_APPENDED = "step_appended"
 MSG_LLM_STATUS = "llm_status"
 MSG_RUN_COMPLETED = "run_completed"
 MSG_RUN_ABORTED = "run_aborted"
+MSG_UPLOAD_FIX_RESULT = "upload_fix_result"
+MSG_LLM_ASSIST_RESULT = "llm_assist_result"
 
 
 MessageHandler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
@@ -427,11 +431,20 @@ class PanelBridge:
             "payload": {"descriptor": descriptor, "candidates": candidates},
         })
 
-    async def broadcast_validate_result(self, passed: bool, error: str | None = None, duration_ms: int = 0) -> None:
-        await self.send({
-            "type": MSG_VALIDATE_RESULT,
-            "payload": {"passed": passed, "error": error, "durationMs": duration_ms},
-        })
+    async def broadcast_validate_result(
+        self,
+        passed: bool,
+        error: str | None = None,
+        duration_ms: int = 0,
+        repair_context: dict[str, Any] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"passed": passed, "error": error, "durationMs": duration_ms}
+        if repair_context:
+            payload["repairContext"] = repair_context
+        if extra:
+            payload.update(extra)
+        await self.send({"type": MSG_VALIDATE_RESULT, "payload": payload})
 
     async def broadcast_pause(self, step_id: str, reason: str = "") -> None:
         await self.send({
@@ -483,3 +496,57 @@ class PanelBridge:
 
     async def broadcast_step_appended(self, step: dict[str, Any]) -> None:
         await self.send({"type": MSG_STEP_APPENDED, "payload": {"step": step}})
+
+    async def broadcast_llm_assist_result(
+        self,
+        *,
+        step_id: str,
+        iteration: int,
+        status: str,
+        diagnosis: str | None = None,
+        action: str | None = None,
+        locator: str | None = None,
+        explanation: str | None = None,
+        captured_dom: str | None = None,
+        exec_error: str | None = None,
+        exec_detail: str | None = None,
+        upload_method: str | None = None,
+    ) -> None:
+        await self.send({
+            "type": MSG_LLM_ASSIST_RESULT,
+            "payload": {
+                "stepId": step_id,
+                "iteration": iteration,
+                "status": status,
+                "diagnosis": diagnosis,
+                "action": action,
+                "locator": locator,
+                "explanation": explanation,
+                "capturedDom": captured_dom,
+                "execError": exec_error,
+                "execDetail": exec_detail,
+                "uploadMethod": upload_method,
+            },
+        })
+
+    async def broadcast_upload_fix_result(
+        self,
+        *,
+        step_id: str,
+        iteration: int,
+        status: str,
+        explanation: str | None = None,
+        strategy: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        await self.send({
+            "type": MSG_UPLOAD_FIX_RESULT,
+            "payload": {
+                "stepId": step_id,
+                "iteration": iteration,
+                "status": status,
+                "explanation": explanation,
+                "strategy": strategy,
+                "error": error,
+            },
+        })

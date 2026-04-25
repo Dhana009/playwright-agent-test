@@ -288,6 +288,72 @@ html, body {
 }
 .pw-mode-btn:hover { border-color: var(--border-3); color: var(--fg-1); }
 .pw-mode-btn.active { background: var(--accent-ghost); border-color: var(--accent-line); color: var(--accent); }
+.pw-mode-btn.active.llm-mode { background: var(--purple-ghost); border-color: rgba(163,113,247,0.5); color: var(--purple); }
+
+/* ── LLM Assist section ── */
+.pw-llm-assist { border-bottom: 1px solid var(--border-1); flex-shrink: 0; }
+.pw-llm-assist-head {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  cursor: pointer; user-select: none; background: var(--bg-1);
+}
+.pw-llm-assist-head:hover { background: var(--bg-2); }
+.pw-llm-assist-chev { color: var(--fg-3); transition: transform 140ms; display: flex; align-items: center; }
+.pw-llm-assist.open .pw-llm-assist-chev { transform: rotate(90deg); }
+.pw-llm-assist-lbl { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--purple); flex: 1; }
+.pw-llm-assist-hint { font-size: 10px; color: var(--fg-4); font-family: var(--font-mono); }
+.pw-llm-assist-body { display: none; border-top: 1px solid var(--border-1); }
+.pw-llm-assist.open .pw-llm-assist-body { display: block; }
+
+/* LLM Assist — iteration thread */
+.la-thread { padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; }
+.la-iter {
+  background: var(--bg-sunken); border: 1px solid var(--border-1);
+  border-radius: 5px; overflow: hidden;
+}
+.la-iter-head {
+  display: flex; align-items: center; gap: 6px; padding: 5px 9px;
+  border-bottom: 1px solid var(--border-1);
+}
+.la-iter-num { font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-4); }
+.la-iter-badge {
+  font-size: 9.5px; font-family: var(--font-mono); padding: 1px 5px; border-radius: 3px;
+}
+.la-iter-badge.diag { background: var(--purple-ghost); color: var(--purple); }
+.la-iter-badge.ok   { background: var(--success-ghost); color: var(--success); }
+.la-iter-badge.fail { background: var(--danger-ghost);  color: var(--danger); }
+.la-iter-outcome { margin-left: auto; font-size: 10px; font-weight: 600; }
+.la-iter-outcome.worked { color: var(--success); }
+.la-iter-outcome.failed { color: var(--danger); }
+.la-iter-body { padding: 7px 9px; font-size: 10.5px; color: var(--fg-1); line-height: 1.5; word-break: break-word; }
+.la-iter-action {
+  margin: 0 9px 7px; padding: 5px 7px; background: var(--bg-2);
+  border: 1px solid var(--border-2); border-radius: 4px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--accent);
+  word-break: break-all; white-space: pre-wrap;
+}
+.la-iter-btns { display: flex; gap: 5px; padding: 0 9px 8px; flex-wrap: wrap; }
+.la-iter-btns .pw-btn { flex: 1; height: 24px; font-size: 10px; min-width: 70px; }
+.la-thinking { display: flex; align-items: center; gap: 7px; padding: 10px 12px; font-size: 10.5px; color: var(--purple); }
+.la-no-llm { padding: 10px 12px; font-size: 10.5px; color: var(--warn); line-height: 1.5; }
+.la-picked-el {
+  margin: 6px 12px; padding: 5px 8px; background: var(--bg-sunken);
+  border: 1px solid var(--border-1); border-radius: 4px;
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--accent);
+  word-break: break-all; display: none;
+}
+.la-picked-el.show { display: block; }
+.la-picked-label { font-size: 9px; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 2px; }
+.la-validate-result {
+  margin: 0 12px 8px; padding: 5px 8px; border-radius: 4px;
+  font-size: 10.5px; display: none; align-items: center; gap: 6px;
+}
+.la-validate-result.show { display: flex; }
+.la-validate-result.pass { background: var(--success-ghost); color: var(--success); border: 1px solid rgba(63,185,80,0.2); }
+.la-validate-result.fail { background: var(--danger-ghost);  color: var(--danger);  border: 1px solid rgba(248,81,73,0.2); }
+.la-dom-toggle { font-size: 9px; color: var(--fg-4); cursor: pointer; padding: 2px 9px 5px; user-select: none; }
+.la-dom-toggle:hover { color: var(--fg-2); }
+.la-dom-pre { display: none; margin: 0 9px 7px; padding: 5px 7px; background: var(--bg-sunken); border: 1px solid var(--border-1); border-radius: 4px; font-family: var(--font-mono); font-size: 9px; color: var(--fg-3); white-space: pre-wrap; word-break: break-all; max-height: 140px; overflow-y: auto; }
+.la-dom-pre.show { display: block; }
 
 /* ── Record zone ── */
 .pw-record-zone {
@@ -860,6 +926,53 @@ html, body {
 .fp-hint-input:focus { border-color: var(--accent-line); }
 .fp-hint-input::placeholder { color: var(--fg-4); }
 .cascade-sub { font-size: 10px; color: var(--fg-3); font-family: var(--font-mono); padding: 0 10px 6px; }
+
+/* ── Upload Fix panel ── */
+.uf-didnt-work {
+  display: inline-block; margin-left: 6px;
+  font-size: 9.5px; color: var(--warn); cursor: pointer;
+  text-decoration: underline dotted; opacity: 0.85;
+}
+.uf-didnt-work:hover { opacity: 1; }
+
+.pw-upload-fix {
+  display: none; margin: 0 12px 8px; border: 1px solid rgba(210,153,34,0.4);
+  border-radius: 6px; background: rgba(210,153,34,0.06); overflow: hidden; flex-shrink: 0;
+}
+.pw-upload-fix.show { display: block; }
+.uf-header {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid rgba(210,153,34,0.2);
+}
+.uf-title { font-size: 11.5px; font-weight: 600; color: var(--warn); flex: 1; }
+.uf-close { color: var(--fg-3); font-size: 14px; cursor: pointer; line-height: 1; padding: 0 2px; }
+.uf-close:hover { color: var(--fg-0); }
+.uf-desc { padding: 7px 12px; font-size: 10.5px; color: var(--fg-2); line-height: 1.5; border-bottom: 1px solid rgba(210,153,34,0.12); }
+.uf-thread { padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; }
+.uf-iter {
+  background: var(--bg-sunken); border: 1px solid var(--border-1);
+  border-radius: 5px; overflow: hidden;
+}
+.uf-iter-head {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+  border-bottom: 1px solid var(--border-1); font-size: 10px;
+}
+.uf-iter-num { font-family: var(--font-mono); color: var(--fg-3); }
+.uf-iter-strategy {
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--accent);
+  background: var(--accent-ghost); padding: 1px 5px; border-radius: 3px;
+}
+.uf-iter-outcome { margin-left: auto; font-size: 10px; font-weight: 500; }
+.uf-iter-outcome.worked { color: var(--success); }
+.uf-iter-outcome.failed { color: var(--danger); }
+.uf-iter-outcome.pending { color: var(--fg-3); }
+.uf-iter-body { padding: 6px 8px; font-size: 10.5px; color: var(--fg-1); line-height: 1.45; word-break: break-word; }
+.uf-iter-error { padding: 4px 8px 6px; font-size: 10px; font-family: var(--font-mono); color: var(--danger); word-break: break-all; }
+.uf-thinking { padding: 8px 12px; font-size: 10.5px; color: var(--fg-2); display: flex; align-items: center; gap: 6px; }
+.uf-actions { padding: 8px 12px; display: flex; gap: 6px; flex-wrap: wrap; border-top: 1px solid rgba(210,153,34,0.15); }
+.uf-actions .pw-btn { flex: 1; height: 26px; font-size: 10.5px; min-width: 80px; }
+.uf-outcome-btns { padding: 6px 12px 10px; display: flex; gap: 6px; }
+.uf-outcome-btns .pw-btn { flex: 1; height: 24px; font-size: 10px; }
 </style>
 </head>
 <body>
@@ -944,6 +1057,10 @@ html, body {
       <button class="pw-mode-btn" id="mode-manual-btn" title="Manual: pick elements and choose actions yourself">
         <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11"/></svg>
         Manual
+      </button>
+      <button class="pw-mode-btn" id="mode-llm-btn" title="LLM Assist: stuck on a step? Let the LLM diagnose and fix it">
+        <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor"><path d="M6 .5l1.2 2.8L10 4.5l-2.8 1.2L6 8.5 4.8 5.7 2 4.5l2.8-1.2L6 .5z"/></svg>
+        LLM
       </button>
     </div>
 
@@ -1085,6 +1202,95 @@ html, body {
       </div>
     </div>
 
+    <!-- ── LLM ASSIST ── -->
+    <div class="pw-llm-assist" id="llm-assist-mode">
+      <div class="pw-llm-assist-head" id="llm-assist-head">
+        <span class="pw-llm-assist-chev">
+          <svg viewBox="0 0 10 10" width="10" height="10" fill="currentColor"><path d="M3 1l5 4-5 4V1z"/></svg>
+        </span>
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor" style="color:var(--purple);flex-shrink:0;"><path d="M6 .5l1.2 2.8L10 4.5l-2.8 1.2L6 8.5 4.8 5.7 2 4.5l2.8-1.2L6 .5z"/></svg>
+        <span class="pw-llm-assist-lbl">LLM Assist</span>
+        <span class="pw-llm-assist-hint" id="llm-assist-hint">expand</span>
+      </div>
+      <div class="pw-llm-assist-body">
+
+        <!-- No LLM warning -->
+        <div class="la-no-llm" id="la-no-llm" style="display:none;">
+          LLM not configured. Go to <strong>Settings</strong> to add an API key.
+        </div>
+
+        <!-- Input form -->
+        <div class="pw-section" id="la-form">
+
+          <!-- Step selector -->
+          <div class="pw-section-title">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M7 1l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z"/></svg>
+            <span>1 — Which step?</span>
+          </div>
+          <select class="pw-select" id="la-step-select" style="width:100%;margin-bottom:2px;">
+            <option value="">— select a step —</option>
+          </select>
+
+          <!-- Focus element picker -->
+          <div class="pw-section-title" style="margin-top:10px;">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11"/></svg>
+            <span>2 — Focus the element</span>
+            <span class="pw-help">?<span class="pw-help-tip">Pick the exact element on the page so the LLM knows precisely where to focus. This prevents hallucination.</span></span>
+          </div>
+          <button class="pw-pick-btn" id="la-pick-btn">
+            <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2l4 10 2-4 4-2L2 2z"/></svg>
+            <span id="la-pick-btn-label">Pick element from page</span>
+            <span class="pick-kbd">Esc</span>
+          </button>
+          <!-- Shows picked element selector -->
+          <div class="la-picked-el" id="la-picked-el">
+            <div class="la-picked-label">Focused element</div>
+            <div id="la-picked-selector"></div>
+          </div>
+
+          <!-- Issue description -->
+          <div class="pw-section-title" style="margin-top:10px;">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.5"/><path d="M6 5.5v3M6 4v-.5"/></svg>
+            <span>3 — Describe the issue</span>
+          </div>
+          <textarea class="fp-hint-input" id="la-issue-input" placeholder="e.g. upload shows success but file didn't appear · click did nothing · fill cleared on blur…" style="height:52px;width:100%;"></textarea>
+
+        </div>
+
+        <!-- Thinking indicator -->
+        <div class="la-thinking" id="la-thinking" style="display:none;">
+          <span class="spinner"></span>
+          <span id="la-thinking-txt">Asking LLM…</span>
+        </div>
+
+        <!-- Validate result -->
+        <div class="la-validate-result" id="la-validate-result">
+          <span id="la-validate-icon"></span>
+          <span id="la-validate-msg"></span>
+          <span style="margin-left:auto;font-size:9.5px;font-family:var(--font-mono);color:var(--fg-3);" id="la-validate-time"></span>
+        </div>
+
+        <!-- Iteration thread -->
+        <div class="la-thread" id="la-thread" style="display:none;"></div>
+
+        <!-- Actions -->
+        <div class="pw-section" style="border-top:1px solid var(--border-1);padding-top:10px;" id="la-actions">
+          <div class="pw-row" style="gap:6px;">
+            <button class="pw-btn" id="la-ask-btn" style="flex:1;background:var(--purple-ghost);border-color:rgba(163,113,247,0.4);color:var(--purple);">
+              <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M6 .5l1.2 2.8L10 4.5l-2.8 1.2L6 8.5 4.8 5.7 2 4.5l2.8-1.2L6 .5z"/></svg>
+              Ask LLM → auto-run
+            </button>
+          </div>
+          <div style="font-size:9px;color:var(--fg-4);margin-top:4px;padding:0 2px;">LLM decides strategy and executes it automatically. You only judge the result.</div>
+          <div class="pw-row" style="gap:6px;margin-top:8px;display:none;" id="la-outcome-row">
+            <button class="pw-btn primary" id="la-worked-btn" style="flex:1;">✓ Worked — apply fix</button>
+            <button class="pw-btn danger" id="la-failed-btn" style="flex:1;">✗ Still broken → next</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
       <!-- Steps toolbar (sticky inside scroll area) -->
       <div class="pw-steps-toolbar" style="position:sticky;top:0;z-index:5;">
         <span class="steps-toolbar-title">Steps</span>
@@ -1177,6 +1383,35 @@ html, body {
             <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M6 .5l1.2 2.8L10 4.5l-2.8 1.2L6 8.5 4.8 5.7 2 4.5l2.8-1.2L6 .5z"/></svg>
             Auto-fix (LLM)
           </button>
+        </div>
+      </div>
+
+      <!-- ── UPLOAD FIX PANEL ── -->
+      <div class="pw-upload-fix" id="upload-fix-panel">
+        <div class="uf-header">
+          <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="var(--warn)" stroke-width="1.5" flex-shrink="0"><path d="M6 1v6M6 9.5v1M3 4l3-3 3 3"/></svg>
+          <span class="uf-title">Upload Fix</span>
+          <span class="uf-close" id="uf-close">×</span>
+        </div>
+        <div class="uf-desc">
+          The upload step reported success but the file didn't appear in the UI.<br>
+          Each time you click <strong>Run LLM Fix</strong>, the LLM analyses the upload widget and tries a strategy. Tell it whether it worked.
+        </div>
+        <div class="uf-thread" id="uf-thread"></div>
+        <div class="uf-thinking" id="uf-thinking" style="display:none;">
+          <span class="spinner"></span>
+          <span id="uf-thinking-txt">Analysing upload widget…</span>
+        </div>
+        <div class="uf-outcome-btns" id="uf-outcome-btns" style="display:none;">
+          <button class="pw-btn primary" id="uf-worked-btn">✓ It worked!</button>
+          <button class="pw-btn danger" id="uf-failed-btn">✗ Still didn't upload</button>
+        </div>
+        <div class="uf-actions">
+          <button class="pw-btn warn" id="uf-run-btn">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M6 .5l1.2 2.8L10 4.5l-2.8 1.2L6 8.5 4.8 5.7 2 4.5l2.8-1.2L6 .5z"/></svg>
+            Run LLM Fix
+          </button>
+          <button class="pw-btn" id="uf-dismiss-btn">Dismiss</button>
         </div>
       </div>
 
@@ -1333,7 +1568,7 @@ const state = {
   recordElapsed: 0,
   recordTimer: null,
   picking: false,
-  candidates: [], selectedCandidateIdx: 0, pickedLocator: null,
+  candidates: [], selectedCandidateIdx: 0, pickedLocator: null, userPickedAction: false,
   steps: [], selectedStepId: null,
   replayStatus: 'idle',      // idle | running | paused | failed
   failingStepId: null,
@@ -1362,6 +1597,13 @@ const state = {
   _pendingForceFixPayload: null,
   _forceFixResendAttempts: 0,
   _activeRepairStepId: null,
+  // Upload fix
+  _uploadFixStepId: null,       // stepId currently open in upload fix panel
+  _uploadFixLastOutcome: null,  // 'worked' | 'failed' | null
+  _uploadFixLastError: null,
+  _uploadFixWaiting: false,     // LLM currently running
+  _uploadFixAwaitingOutcome: false, // execution done, waiting for user to confirm
+  _stepsMarkedDidntWork: {},    // stepId -> true
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -1371,26 +1613,42 @@ const root = $('panel-root');
 // ── Record mode toggle ───────────────────────────────────────────────────��────
 $('mode-auto-btn').addEventListener('click', () => setRecordMode('auto'));
 $('mode-manual-btn').addEventListener('click', () => setRecordMode('manual'));
+$('mode-llm-btn').addEventListener('click', () => setRecordMode('llm'));
 
 function setRecordMode(mode) {
   state.recordMode = mode;
   $('mode-auto-btn').classList.toggle('active', mode === 'auto');
   $('mode-manual-btn').classList.toggle('active', mode === 'manual');
+  const llmBtn = $('mode-llm-btn');
+  llmBtn.classList.toggle('active', mode === 'llm');
+  llmBtn.classList.toggle('llm-mode', mode === 'llm');
 
   const recZone = $('record-zone');
   const manualMode = $('manual-mode');
+  const llmAssist = $('llm-assist-mode');
   const metaTxt = $('record-meta-text');
 
   if (mode === 'auto') {
     recZone.style.display = '';
     manualMode.classList.remove('open');
     manualMode.querySelector('.pw-manual-hint').textContent = 'expand';
+    llmAssist.classList.remove('open');
+    $('llm-assist-hint').textContent = 'expand';
     metaTxt.textContent = 'Click to auto-capture every interaction';
-  } else {
-    // Manual mode: hide record button, expand pick & build
+  } else if (mode === 'manual') {
     if (!state.recording) recZone.style.display = 'none';
     manualMode.classList.add('open');
     manualMode.querySelector('.pw-manual-hint').textContent = 'collapse';
+    llmAssist.classList.remove('open');
+    $('llm-assist-hint').textContent = 'expand';
+  } else if (mode === 'llm') {
+    if (!state.recording) recZone.style.display = 'none';
+    manualMode.classList.remove('open');
+    manualMode.querySelector('.pw-manual-hint').textContent = 'expand';
+    llmAssist.classList.add('open');
+    $('llm-assist-hint').textContent = 'collapse';
+    laRefreshStepDropdown();
+    laCheckLlmAvailable();
   }
 }
 
@@ -1493,6 +1751,7 @@ function handleMessage(msg) {
       if (payload && payload.verified !== undefined) state.llmVerified = payload.verified;
       if (payload && payload.verify_message) state.llmVerifyMsg = payload.verify_message;
       updateLlmBanner();
+      laCheckLlmAvailable();
       // Update settings verify result if visible
       if (payload && payload.verify_message && state.settingsOpen) {
         const vr = $('llm-verify-result');
@@ -1519,6 +1778,8 @@ function handleMessage(msg) {
       }
       break;
     }
+    case 'upload_fix_result': onUploadFixResult(payload); break;
+    case 'llm_assist_result': onLlmAssistResult(payload); break;
   }
 }
 
@@ -1877,6 +2138,11 @@ function cancelPick() {
 }
 
 function onPickResult(payload) {
+  // Route to LLM assist if it has an active pick
+  if (laState.picking) {
+    laOnPickResult(payload.descriptor, payload.candidates);
+    return;
+  }
   state.picking = false;
   $('pick-btn').classList.remove('active');
   $('pick-btn-label').textContent = 'Pick element from page';
@@ -1935,10 +2201,15 @@ $('use-locator-btn').addEventListener('click', () => {
 });
 
 function setContextualAction(candidate) {
+  if (state.userPickedAction) {
+    updateParamInputs();
+    return;
+  }
   const tag = (candidate.tag || '').toLowerCase();
   const inputType = (candidate.inputType || '').toLowerCase();
   const sel = $('action-select');
   if (tag === 'input' && inputType === 'checkbox') sel.value = 'check';
+  else if (tag === 'input' && inputType === 'file') sel.value = 'upload';
   else if (tag === 'input' || tag === 'textarea') sel.value = 'fill';
   else if (tag === 'select') sel.value = 'select';
   else sel.value = 'click';
@@ -1949,6 +2220,7 @@ function setContextualAction(candidate) {
 const PAGE_LEVEL_ACTIONS = new Set(['navigate','navigate-back','wait-for','wait-timeout','dialog-handle','assert-url','assert-title']);
 
 $('action-select').addEventListener('change', () => {
+  state.userPickedAction = true;
   updateParamInputs();
   resetValidate();
   // When switching to a page-level action, dim the pick section; restore otherwise
@@ -2026,6 +2298,9 @@ function doValidate() {
 function onValidateResult(payload) {
   $('validate-btn').disabled = false;
   const { passed, error, durationMs } = payload;
+
+  // LLM Assist no longer uses manual validate — execution is fully automatic server-side
+  if (payload.repairContext && payload.repairContext.caller === 'llm_assist') return;
 
   if (state._repairTesting) {
     state._repairTesting = false;
@@ -2130,6 +2405,7 @@ $('add-step-btn').addEventListener('click', () => {
   send({ type: 'append_step', payload: { action, locator, params, insertAfterStepId: state.insertAfterStepId } });
   state.insertAfterStepId = null;
   state.pickedLocator = null;
+  state.userPickedAction = false;
   $('pick-status').textContent = 'Pick an element, or choose a page-level action above.';
   $('pick-section').style.opacity = '';
   $('candidates-container').style.display = 'none';
@@ -2153,6 +2429,7 @@ function appendStepToList(step) {
   state.steps.push(step);
   bumpRecordingStep(step.action);
   renderStepList();
+  laRefreshStepDropdown();
   updateStatusBar();
   $('save-version-btn').disabled = false;
   // Enable replay button now that we have steps
@@ -2199,10 +2476,12 @@ function renderStepList() {
       ? Date.now() - state._pendingStepRunStartedAt
       : 0;
     const runElapsedText = runElapsedMs > 0 ? ` ${Math.floor(runElapsedMs / 1000)}s` : '';
+    const isUpload = (step.action || '').replace('-','_') === 'upload';
+    const isPassedUpload = isUpload && stepRunState === 'pass' && !state._stepsMarkedDidntWork[step.stepId];
     const inlineResultHtml = stepRunState === 'running'
       ? `<div class="step-inline-result running"><span class="spinner" style="margin-right:4px;"></span>running…${runElapsedText}</div>`
       : stepRunState === 'pass'
-      ? `<div class="step-inline-result pass">✓ ${escHtml(step._stepError || 'passed')}</div>`
+      ? `<div class="step-inline-result pass">✓ ${escHtml(step._stepError || 'passed')}${isPassedUpload ? `<span class="uf-didnt-work" data-uf-step="${escHtml(step.stepId)}">didn't upload?</span>` : ''}</div>`
       : stepRunState === 'fail'
         ? `<div class="step-inline-result fail"><span class="step-inline-msg">✗ ${escHtml(step._stepError || 'failed')}</span><span class="step-inline-fix" data-step-fix="${step.stepId}">Fix</span></div>`
         : '';
@@ -2231,6 +2510,7 @@ function renderStepList() {
       const dup = e.target.closest('[data-dup]');
       const run = e.target.closest('[data-run]');
       const fix = e.target.closest('[data-step-fix]');
+      const uf  = e.target.closest('[data-uf-step]');
       if (del) { send({ type: 'delete_step', payload: { stepId: del.dataset.del } }); state.steps = state.steps.filter(s => s.stepId !== del.dataset.del); renderStepList(); updateReplayControls(); return; }
       if (dup) { send({ type: 'duplicate_step', payload: { stepId: dup.dataset.dup } }); return; }
       if (run) { runSingleStep(run.dataset.run); return; }
@@ -2239,6 +2519,7 @@ function renderStepList() {
         if (s) openManualFixEditor(s);
         return;
       }
+      if (uf) { openUploadFix(uf.dataset.ufStep); return; }
       state.selectedStepId = step.stepId === state.selectedStepId ? null : step.stepId;
       renderStepList();
     });
@@ -3177,6 +3458,324 @@ function escHtml(str) {
 function truncate(str, len) {
   if (!str) return '';
   return str.length > len ? str.slice(0, len) + '…' : str;
+}
+
+// ── LLM Assist ────────────────────────────────────────────────────────────────
+
+const laState = {
+  picking: false,
+  pickedLocator: null,   // selector string from pick — used as DOM anchor for LLM
+  iterations: [],        // full history of every sub-attempt: [{iteration, strategy, locator, diagnosis, plan, outcome, error, execDetail, uploadMethod, capturedDom}]
+  currentLocator: null,  // locator from last successful/last attempt
+  waiting: false,        // request in flight
+  pendingAttempts: 0,    // how many sub-attempts are still expected in the current round
+};
+
+// Expand/collapse via head click
+$('llm-assist-head').addEventListener('click', () => {
+  const el = $('llm-assist-mode');
+  const isOpen = el.classList.toggle('open');
+  $('llm-assist-hint').textContent = isOpen ? 'collapse' : 'expand';
+  if (isOpen) { laRefreshStepDropdown(); laCheckLlmAvailable(); }
+});
+
+function laCheckLlmAvailable() {
+  const noLlm = $('la-no-llm');
+  const form = $('la-form');
+  const actions = $('la-actions');
+  // LLM Assist only needs the LLM to be available (key configured + verified).
+  // The pill toggle (llmEnabled) controls auto-healing, not this explicit layer.
+  const hasLlm = state.llmAvailable;
+  noLlm.style.display = hasLlm ? 'none' : 'block';
+  if (form) form.style.display = hasLlm ? 'block' : 'none';
+  if (actions) actions.style.display = hasLlm ? 'block' : 'none';
+}
+
+function laRefreshStepDropdown() {
+  const sel = $('la-step-select');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— select a step —</option>';
+  state.steps.forEach((s, i) => {
+    const label = `${String(i+1).padStart(2,'0')}  ${s.action}${s.locator ? '  ·  ' + truncate(s.locator, 32) : ''}`;
+    const opt = document.createElement('option');
+    opt.value = s.stepId;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  });
+  if (prev) sel.value = prev;
+}
+
+// Pick button — reuses same pick infra as manual mode but routes result back here
+$('la-pick-btn').addEventListener('click', () => {
+  if (laState.picking) {
+    laState.picking = false;
+    $('la-pick-btn-label').textContent = 'Pick element from page';
+    send({ type: 'pick_cancel', payload: {} });
+    return;
+  }
+  laState.picking = true;
+  $('la-pick-btn-label').textContent = 'Cancel pick (Esc)';
+  send({ type: 'pick_start', payload: { caller: 'llm_assist' } });
+});
+
+// Handle pick result when in LLM assist pick mode
+function laOnPickResult(descriptor, candidates) {
+  if (!laState.picking) return false; // not our pick
+  laState.picking = false;
+  $('la-pick-btn-label').textContent = 'Pick element from page';
+
+  // Best locator from candidates
+  const best = candidates && candidates[0] ? candidates[0].selector : null;
+  laState.pickedLocator = best || null;
+
+  // Build compact DOM snippet: tag + key attrs (no full outerHTML — token efficiency)
+  const tag = descriptor.tag || '';
+  const id = descriptor.id ? `#${descriptor.id}` : '';
+  const testid = descriptor.testid ? `[data-testid="${descriptor.testid}"]` : '';
+  const aria = descriptor.ariaLabel ? `[aria-label="${descriptor.ariaLabel}"]` : '';
+  const placeholder = descriptor.placeholder ? `[placeholder="${descriptor.placeholder}"]` : '';
+  const role = descriptor.role ? `[role="${descriptor.role}"]` : '';
+  const inputType = descriptor.inputType ? `[type="${descriptor.inputType}"]` : '';
+  const text = descriptor.text ? ` "${truncate(descriptor.text, 40)}"` : '';
+  const pickedEl = $('la-picked-el');
+  const pickedSel = $('la-picked-selector');
+  if (pickedEl && pickedSel) {
+    pickedSel.textContent = best || `${tag}${id}`;
+    pickedEl.classList.add('show');
+  }
+  return true;
+}
+
+// Serialise laState.iterations for the LLM — includes every sub-attempt with exact errors
+function laSerialiseHistory() {
+  return laState.iterations.map(it => ({
+    iteration: it.iteration,
+    strategy: it.strategy || '',
+    locator: it.locator || '',
+    diagnosis: it.diagnosis || '',
+    outcome: it.outcome || 'pending',   // exec_passed | exec_failed | user_failed
+    error: it.error || null,            // exact error string from execution
+    exec_detail: it.execDetail || null,
+    uploadMethod: it.uploadMethod || null,
+  }));
+}
+
+// Ask LLM — triggers full think→execute loop on server, no manual validate step
+$('la-ask-btn').addEventListener('click', () => {
+  if (laState.waiting) return;
+
+  const stepId = $('la-step-select').value;
+  if (!stepId) { alert('Please select a step first.'); return; }
+
+  const issue = ($('la-issue-input').value || '').trim();
+
+  laState.waiting = true;
+  laState.pendingAttempts = 0;
+  $('la-outcome-row').style.display = 'none';
+  laHideValidateResult();
+  laSetThinking(true, 'LLM analysing…');
+
+  send({
+    type: 'llm_assist',
+    payload: {
+      stepId,
+      issue,
+      pickedLocator: laState.pickedLocator,
+      iterationHistory: laSerialiseHistory(),
+    },
+  });
+});
+
+// Worked — user confirms the fix actually worked visually on the page
+$('la-worked-btn').addEventListener('click', () => {
+  const stepId = $('la-step-select').value;
+  if (!stepId || !laState.currentLocator) return;
+  if (laState.iterations.length) laState.iterations[laState.iterations.length-1].outcome = 'worked';
+  laUpdateLastIterCard();
+  $('la-outcome-row').style.display = 'none';
+  send({ type: 'accept_llm_repair', payload: { stepId, locator: laState.currentLocator } });
+  applyLocalStepOverride(stepId, laState.currentLocator, null);
+  laAddSystemMsg('✓ Fix applied to step.');
+});
+
+// Still broken — user says the executed action didn't actually fix it visually → auto-loop
+$('la-failed-btn').addEventListener('click', () => {
+  if (laState.iterations.length) {
+    laState.iterations[laState.iterations.length-1].outcome = 'user_failed';
+  }
+  laUpdateLastIterCard();
+  $('la-outcome-row').style.display = 'none';
+  laAutoNextIteration();
+});
+
+const LA_MAX_AUTO_ITERATIONS = 6;
+
+// Fire the next LLM round automatically (all sub-attempts in previous round failed)
+function laAutoNextIteration() {
+  const stepId = $('la-step-select').value;
+  if (!stepId) return;
+  if (laState.iterations.length >= LA_MAX_AUTO_ITERATIONS) {
+    laAddSystemMsg(`Reached ${LA_MAX_AUTO_ITERATIONS} attempts without success. Add more context in the text box and click "Ask LLM" to continue.`);
+    return;
+  }
+  const issue = ($('la-issue-input').value || '').trim();
+  laState.waiting = true;
+  laState.pendingAttempts = 0;
+  laHideValidateResult();
+  laSetThinking(true, 'All attempts failed — asking LLM for new strategies…');
+  send({
+    type: 'llm_assist',
+    payload: {
+      stepId,
+      issue,
+      pickedLocator: laState.pickedLocator,
+      iterationHistory: laSerialiseHistory(),
+    },
+  });
+}
+
+// Handle all responses from server for LLM Assist
+function onLlmAssistResult(payload) {
+  const status = payload.status || '';
+
+  if (status === 'error') {
+    laState.waiting = false;
+    laState.pendingAttempts = 0;
+    laSetThinking(false);
+    laAddSystemMsg(`⚠ Error: ${payload.explanation || 'Unknown error'}`);
+    return;
+  }
+
+  if (status === 'executing') {
+    // Sub-attempt starting — action label contains "[N/M] rationale"
+    laSetThinking(true, `Trying: ${payload.action || 'running…'}`);
+    // Parse total attempts from "[N/M]" prefix so we know when the round ends
+    const m = (payload.action || '').match(/^\[(\d+)\/(\d+)\]/);
+    if (m) laState.pendingAttempts = parseInt(m[2], 10) - parseInt(m[1], 10) + 1;
+    return;
+  }
+
+  // exec_passed or exec_failed — a sub-attempt result
+  const iterNum = payload.iteration || (laState.iterations.length + 1);
+  const succeeded = status === 'exec_passed';
+
+  const iter = {
+    iteration: iterNum,
+    strategy: payload.execDetail || '',
+    diagnosis: payload.diagnosis || '',
+    plan: payload.action || '',
+    locator: payload.locator || null,
+    capturedDom: payload.capturedDom || null,
+    outcome: succeeded ? 'exec_passed' : 'exec_failed',
+    error: payload.execError || null,
+    execDetail: payload.execDetail || null,
+    uploadMethod: payload.uploadMethod || null,
+  };
+  laState.iterations.push(iter);
+  if (iter.locator) laState.currentLocator = iter.locator;
+  laState.pendingAttempts = Math.max(0, laState.pendingAttempts - 1);
+
+  laRenderIterCard(iter, laState.iterations.length - 1);
+
+  // Update banner
+  const vr = $('la-validate-result');
+  if (vr) {
+    vr.className = 'la-validate-result show ' + (succeeded ? 'pass' : 'fail');
+    $('la-validate-icon').textContent = succeeded ? '✓' : '✗';
+    let msg = succeeded
+      ? 'Executed on page — check if it worked visually ↓'
+      : ('Attempt failed: ' + (iter.error || 'unknown error'));
+    if (iter.uploadMethod) msg += ` [${iter.uploadMethod}]`;
+    $('la-validate-msg').textContent = msg;
+    $('la-validate-time').textContent = '';
+  }
+
+  if (succeeded) {
+    // This sub-attempt ran without error — stop the round, let user confirm visually
+    laState.waiting = false;
+    laState.pendingAttempts = 0;
+    laSetThinking(false);
+    $('la-outcome-row').style.display = 'flex';
+    $('la-worked-btn').textContent = '✓ Worked — apply fix';
+    $('la-failed-btn').textContent = '✗ Didn\'t work visually';
+  } else if (laState.pendingAttempts <= 0) {
+    // All sub-attempts in this round failed — go back to LLM with full failure context
+    laState.waiting = false;
+    laSetThinking(false);
+    setTimeout(laAutoNextIteration, 500);
+  }
+  // else: more sub-attempts coming in this round — stay in waiting state
+}
+
+function laHideValidateResult() {
+  const vr = $('la-validate-result');
+  if (vr) vr.className = 'la-validate-result';
+}
+
+// laOnValidateResult is no longer used (execution is now automatic)
+// kept as stub to prevent errors from old validate_result messages
+function laOnValidateResult(passed, durationMs, error, uploadMethod) {
+  // no-op: LLM Assist no longer uses manual validate
+}
+
+function laSetThinking(show, txt) {
+  const el = $('la-thinking');
+  if (!el) return;
+  el.style.display = show ? 'flex' : 'none';
+  if (txt) $('la-thinking-txt').textContent = txt;
+}
+
+function laRenderIterCard(iter, idx) {
+  const thread = $('la-thread');
+  if (!thread) return;
+  thread.style.display = 'block';
+
+  const card = document.createElement('div');
+  card.className = 'la-iter';
+  card.dataset.iterIdx = idx;
+
+  const outcomeLabel = iter.outcome === 'exec_passed' ? '✓ ran' : iter.outcome === 'exec_failed' ? '✗ failed' : iter.outcome === 'worked' ? '✓ worked' : '…';
+  const outcomeClass = (iter.outcome === 'exec_passed' || iter.outcome === 'worked') ? 'ok' : 'fail';
+
+  card.innerHTML = `
+    <div class="la-iter-head">
+      <span class="la-iter-num">#${iter.iteration}</span>
+      ${iter.uploadMethod ? `<span class="la-iter-badge diag">${escHtml(iter.uploadMethod)}</span>` : `<span class="la-iter-badge diag">llm</span>`}
+      <span class="la-iter-outcome ${outcomeClass}" id="la-iter-outcome-${idx}">${outcomeLabel}</span>
+    </div>
+    <div class="la-iter-body" style="font-size:10px;color:var(--fg-2);">${escHtml(iter.diagnosis)}</div>
+    ${iter.plan ? `<div class="la-iter-action" style="color:var(--accent)">${escHtml(iter.plan)}</div>` : ''}
+    ${iter.locator ? `<div style="padding:3px 9px 5px;font-family:var(--font-mono);font-size:9px;color:var(--accent);word-break:break-all;">→ ${escHtml(iter.locator)}</div>` : ''}
+    ${iter.error ? `<div style="padding:3px 9px 5px;font-family:var(--font-mono);font-size:9px;color:var(--danger);word-break:break-all;">✗ ${escHtml(iter.error)}</div>` : ''}
+    ${iter.capturedDom ? `<div class="la-dom-toggle" onclick="this.nextElementSibling.classList.toggle('show');this.textContent=this.nextElementSibling.classList.contains('show')?'▲ hide DOM':'▼ show DOM sent to LLM'">▼ show DOM sent to LLM</div><pre class="la-dom-pre">${escHtml(iter.capturedDom)}</pre>` : ''}
+  `;
+  thread.appendChild(card);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function laUpdateLastIterCard() {
+  const idx = laState.iterations.length - 1;
+  if (idx < 0) return;
+  const iter = laState.iterations[idx];
+  const outcomeEl = document.getElementById(`la-iter-outcome-${idx}`);
+  if (!outcomeEl) return;
+  const o = iter.outcome || 'pending';
+  const labelMap = { worked: '✓ worked', exec_passed: '✓ ran', exec_failed: '✗ failed', user_failed: '✗ still broken' };
+  const classMap = { worked: 'ok', exec_passed: 'ok', exec_failed: 'fail', user_failed: 'fail' };
+  outcomeEl.className = `la-iter-outcome ${classMap[o] || ''}`;
+  outcomeEl.textContent = labelMap[o] || o;
+}
+
+function laAddSystemMsg(txt) {
+  const thread = $('la-thread');
+  if (!thread) return;
+  thread.style.display = 'block';
+  const msg = document.createElement('div');
+  msg.style.cssText = 'font-size:10px;color:var(--fg-3);padding:4px 2px;font-family:var(--font-mono);';
+  msg.textContent = txt;
+  thread.appendChild(msg);
+  thread.scrollTop = thread.scrollHeight;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
