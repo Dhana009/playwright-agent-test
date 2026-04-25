@@ -41,6 +41,7 @@ MSG_VALIDATE_RESULT = "validate_result"
 MSG_REPLAY_STEP_STATUS = "replay_step_status"
 MSG_PAUSE = "pause"
 MSG_FORCE_FIX_PROGRESS = "force_fix_progress"
+MSG_REPAIR_APPLIED = "repair_applied"
 MSG_VERSIONS_RESPONSE = "versions_response"
 MSG_URL_CHANGED = "url_changed"
 MSG_STEP_APPENDED = "step_appended"
@@ -141,7 +142,7 @@ class PanelBridge:
     # ── WebSocket handler ─────────────────────────────────────────────────────
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse()
+        ws = web.WebSocketResponse(heartbeat=15.0, receive_timeout=60.0, autoping=True)
         await ws.prepare(request)
         self._clients.add(ws)
         logger.info("panel_client_connected")
@@ -162,13 +163,19 @@ class PanelBridge:
                     except json.JSONDecodeError:
                         continue
                     await self._dispatch(data)
+                elif msg.type == WSMsgType.PING:
+                    logger.debug("panel_ws_ping")
+                elif msg.type == WSMsgType.PONG:
+                    logger.debug("panel_ws_pong")
                 elif msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
+                    if msg.type == WSMsgType.ERROR:
+                        logger.warning("panel_ws_msg_error")
                     break
         except Exception as exc:
             logger.debug("panel_ws_error error=%s", str(exc))
         finally:
             self._clients.discard(ws)
-            logger.info("panel_client_disconnected")
+            logger.info("panel_client_disconnected close_code=%s", ws.close_code)
 
         return ws
 
@@ -177,6 +184,8 @@ class PanelBridge:
         payload = msg.get("payload", {})
         handlers = self._handlers.get(msg_type, [])
         logger.debug("panel_message_received type=%s has_handler=%s", msg_type, bool(handlers))
+        if msg_type in (MSG_FORCE_FIX, MSG_VALIDATE_STEP, MSG_RESUME):
+            logger.info("panel_message_received type=%s has_handler=%s", msg_type, bool(handlers))
         if not handlers:
             logger.warning("panel_message_unhandled type=%s", msg_type)
             return
@@ -437,16 +446,36 @@ class PanelBridge:
         repaired: bool = False,
         locator: str | None = None,
         explanation: str | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
+        payload = {
+            "stage": stage,
+            "status": status,
+            "repaired": repaired,
+            "locator": locator,
+            "explanation": explanation,
+        }
+        if meta:
+            payload["meta"] = meta
         await self.send({
             "type": MSG_FORCE_FIX_PROGRESS,
-            "payload": {
-                "stage": stage,
-                "status": status,
-                "repaired": repaired,
-                "locator": locator,
-                "explanation": explanation,
-            },
+            "payload": payload,
+        })
+
+    async def broadcast_repair_applied(
+        self,
+        *,
+        step_id: str,
+        locator: str | None = None,
+        params: dict[str, Any] | None = None,
+        source: str = "resume_override",
+    ) -> None:
+        payload: dict[str, Any] = {"stepId": step_id, "locator": locator, "source": source}
+        if params is not None:
+            payload["params"] = params
+        await self.send({
+            "type": MSG_REPAIR_APPLIED,
+            "payload": payload,
         })
 
     async def broadcast_versions(self, versions: list[dict[str, Any]]) -> None:

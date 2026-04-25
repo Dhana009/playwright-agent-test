@@ -141,6 +141,21 @@ html, body {
 #panel-scroll-body::-webkit-scrollbar-track { background: transparent; }
 #panel-scroll-body::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
 
+/* Dedicated repair/fix dock below step list */
+#repair-dock {
+  display: none;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-1);
+  background: var(--bg-1);
+  max-height: 44%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+#panel-root.repair-active #repair-dock { display: block; }
+#repair-dock::-webkit-scrollbar { width: 6px; }
+#repair-dock::-webkit-scrollbar-track { background: transparent; }
+#repair-dock::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+
 /* ── Header ── */
 .pw-header {
   display: flex;
@@ -495,7 +510,36 @@ html, body {
 }
 .step-inline-result.running { display: block; background: var(--info-ghost); color: var(--info); }
 .step-inline-result.pass { display: block; background: var(--success-ghost); color: var(--success); }
-.step-inline-result.fail { display: block; background: var(--danger-ghost); color: var(--danger); }
+.step-inline-result.fail {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  background: var(--danger-ghost);
+  color: var(--danger);
+}
+.step-inline-msg {
+  flex: 1 1 180px;
+  min-width: 0;
+  word-break: break-word;
+}
+.step-inline-fix {
+  flex: 0 0 auto;
+  color: var(--accent);
+  cursor: pointer;
+  background: rgba(45,212,191,0.1);
+  border: 1px solid rgba(45,212,191,0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--font-sans);
+  font-size: 9.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.step-inline-fix:hover {
+  background: rgba(45,212,191,0.18);
+  border-color: rgba(45,212,191,0.55);
+}
 
 .pw-saved-path {
   display: none; align-items: center; gap: 6px; padding: 5px 12px;
@@ -642,10 +686,26 @@ html, body {
 .fix-editor-title { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--warn); margin-bottom: 8px; }
 .fix-editor-title .title-grow { flex: 1; }
 .fix-close-btn {
-  border: 1px solid rgba(210,153,34,0.25); background: transparent; color: var(--fg-3);
-  border-radius: 3px; width: 22px; height: 22px; cursor: pointer; line-height: 1;
+  border: 1px solid rgba(210,153,34,0.45);
+  background: rgba(210,153,34,0.14);
+  color: var(--warn);
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  line-height: 1;
+  font-size: 15px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
-.fix-close-btn:hover { color: var(--fg-0); background: rgba(210,153,34,0.12); }
+.fix-close-btn:hover {
+  color: var(--fg-0);
+  background: rgba(210,153,34,0.24);
+  border-color: rgba(210,153,34,0.7);
+}
 
 /* ── Force-fix cascade ── */
 .pw-cascade-wrap {
@@ -686,6 +746,10 @@ html, body {
 .llm-result-label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
 .llm-result-txt { font-size: 11px; color: var(--fg-1); line-height: 1.4; word-break: break-word; max-height: 112px; overflow-y: auto; padding-right: 4px; }
 .llm-selector-display { font-family: var(--font-mono); font-size: 10.5px; color: var(--accent); background: rgba(0,0,0,0.3); padding: 3px 7px; border-radius: 3px; margin-top: 5px; word-break: break-all; max-height: 58px; overflow-y: auto; }
+.llm-trace { margin-top: 6px; border: 1px solid var(--line); border-radius: 4px; background: rgba(0,0,0,0.2); padding: 6px; }
+.llm-trace-label { font-size: 9px; color: var(--fg-3); letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 4px; }
+.llm-trace-txt { font-family: var(--font-mono); font-size: 10px; color: var(--fg-1); line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+.repair-apply-status { margin-top: 6px; font-size: 10px; color: var(--success); font-family: var(--font-mono); }
 .llm-result-btns { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .llm-result-btns .pw-btn { flex: 1; height: 26px; font-size: 10.5px; }
 
@@ -1047,6 +1111,10 @@ html, body {
         </div>
       </div>
 
+    </div><!-- /panel-scroll-body -->
+
+    <!-- ── REPAIR/FIX DOCK (separate from step list scroll) ── -->
+    <div id="repair-dock">
       <!-- ── FAILURE PANEL ── -->
       <div class="pw-failure-panel" id="failure-panel">
         <div class="fp-header">
@@ -1097,7 +1165,7 @@ html, body {
         </div>
         <div id="fix-status" style="display:none;font-size:10px;font-family:var(--font-mono);margin-bottom:8px;"></div>
         <div style="font-size:10px;color:var(--fg-3);line-height:1.45;margin-bottom:8px;">
-          Validate fix runs this step once with the locator/value/timeout above.<br>
+          Validate fix runs this step once using only the locator/value/timeout above.<br>
           Need AI healing? Use <strong>Auto-fix</strong> in the failure panel (LLM stage 4).
         </div>
         <div class="pw-row">
@@ -1132,16 +1200,21 @@ html, body {
             <div class="llm-result-label">LLM Response</div>
             <div class="llm-result-txt" id="llm-result-txt"></div>
             <div class="llm-selector-display" id="llm-selector-display" style="display:none;"></div>
+            <div class="llm-trace" id="llm-trace-box" style="display:none;">
+              <div class="llm-trace-label">Repair trace</div>
+              <div class="llm-trace-txt" id="llm-trace-txt"></div>
+            </div>
+            <div class="repair-apply-status" id="repair-apply-status" style="display:none;"></div>
             <div class="llm-result-btns">
-              <button class="pw-btn primary" id="accept-repair-btn">Accept repair</button>
+              <button class="pw-btn primary" id="accept-repair-btn">Apply Fix &amp; Test Step</button>
+              <button class="pw-btn" id="resume-after-test-btn" style="display:none;">Resume replay</button>
               <button class="pw-btn" id="try-manual-btn">Manual fix</button>
               <button class="pw-btn" id="close-repair-btn">Close</button>
             </div>
           </div>
         </div>
       </div>
-
-    </div><!-- /panel-scroll-body -->
+    </div>
 
     <!-- ── REPLAY CONTROLS (fixed at bottom) ── -->
     <div class="pw-controls" id="replay-controls">
@@ -1281,6 +1354,14 @@ const state = {
   _addingStepInFailed: false,
   _pendingStepRunStartedAt: 0,
   _stepRunTicker: null,
+  _repairTesting: false,
+  _repairTestLocator: null,
+  _forceFixAwaitingAck: false,
+  _forceFixAckTimer: null,
+  _forceFixDisconnectGraceTimer: null,
+  _pendingForceFixPayload: null,
+  _forceFixResendAttempts: 0,
+  _activeRepairStepId: null,
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -1321,8 +1402,30 @@ function connectWs() {
     state.connected = true;
     updateStatusBar();
     send({ type: 'list_versions', payload: {} });
+    clearForceFixDisconnectGraceTimer();
+    if (state._pendingForceFixPayload && (state.forceFixActive || state._forceFixAwaitingAck)) {
+      const resent = send({ type: 'force_fix', payload: state._pendingForceFixPayload });
+      if (resent) {
+        state._forceFixResendAttempts += 1;
+        state._forceFixAwaitingAck = true;
+        startForceFixAckTimer();
+        setAutoFixStatus('Connection restored. Resent Auto-fix request…', 'running');
+      } else {
+        setAutoFixStatus('Connection restored but resend failed. Click Auto-fix again.', 'error');
+      }
+    }
   };
-  state.ws.onclose = () => { state.connected = false; updateStatusBar(); scheduleReconnect(); };
+  state.ws.onclose = (evt) => {
+    state.connected = false;
+    updateStatusBar();
+    if (state.forceFixActive || state._forceFixAwaitingAck) {
+      clearForceFixAckTimer();
+      setAutoFixStatus('Connection lost. Attempting Auto-fix recovery…', 'error');
+      startForceFixDisconnectGraceTimer();
+    }
+    try { console.warn('panel ws closed', evt && evt.code, evt && evt.reason); } catch(_) {}
+    scheduleReconnect();
+  };
   state.ws.onerror = () => {};
   state.ws.onmessage = evt => {
     let msg; try { msg = JSON.parse(evt.data); } catch(e) { return; }
@@ -1362,6 +1465,7 @@ function handleMessage(msg) {
     case 'run_completed':     onRunCompleted(); break;
     case 'run_aborted':       onRunAborted(); break;
     case 'force_fix_progress': onForceFixProgress(payload); break;
+    case 'repair_applied':    onRepairApplied(payload); break;
     case 'step_appended':     if (payload && payload.step) { appendStepToList(payload.step); } break;
     case 'steps_state':       if (payload && payload.steps) { state.steps = payload.steps; renderStepList(); restorePauseState(); updateReplayControls(); } break;
     case 'version_loaded':    onVersionLoaded(payload); break;
@@ -1472,7 +1576,7 @@ function setRepairMode(mode, opts = {}) {
     const target = mode === 'manual' ? $('fix-editor')
       : (mode === 'autoFix' || mode === 'llmResult') ? $('cascade-wrap')
       : $('failure-panel');
-    safeScrollIntoView(target);
+    scrollRepairSurfaceTop(target);
   }
 }
 
@@ -1494,13 +1598,25 @@ function updateStickyOffsets() {
 
 function safeScrollIntoView(el) {
   if (!el) return;
-  const scroller = $('panel-scroll-body');
+  const repairDock = $('repair-dock');
+  const scroller = repairDock && repairDock.contains(el) ? repairDock : $('panel-scroll-body');
   if (!scroller) return;
   const rect = el.getBoundingClientRect();
   const bounds = scroller.getBoundingClientRect();
   if (rect.top < bounds.top || rect.bottom > bounds.bottom) {
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+}
+
+function scrollRepairSurfaceTop(el) {
+  if (!el) return;
+  const repairDock = $('repair-dock');
+  const scroller = repairDock && repairDock.contains(el) ? repairDock : $('panel-scroll-body');
+  if (!scroller) return;
+  const scrollerRect = scroller.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const topOffset = Math.max(0, (elRect.top - scrollerRect.top) + scroller.scrollTop - 6);
+  scroller.scrollTo({ top: topOffset, behavior: 'smooth' });
 }
 
 function startReplay() {
@@ -1911,6 +2027,38 @@ function onValidateResult(payload) {
   $('validate-btn').disabled = false;
   const { passed, error, durationMs } = payload;
 
+  if (state._repairTesting) {
+    state._repairTesting = false;
+    const testedLocator = state._repairTestLocator || $('llm-selector-display').textContent || '';
+    state._repairTestLocator = null;
+    const txt = $('llm-result-txt');
+    const resumeBtn = $('resume-after-test-btn');
+    if (passed) {
+      if (txt) {
+        txt.textContent = `Step test passed${durationMs ? ` in ${durationMs}ms` : ''}. You can now resume replay.`;
+      }
+      setAutoFixStatus('Repair verified. Click Resume replay to continue.', 'running');
+      if (resumeBtn) resumeBtn.style.display = '';
+      $('accept-repair-btn').disabled = true;
+      $('accept-repair-btn').textContent = 'Fix verified';
+      $('llm-result-label').textContent = 'Repair verified';
+      $('sb-last-run').textContent = 'Last run: repair step passed';
+      $('sb-last-run').className = 'status-item ok';
+    } else {
+      if (txt) {
+        txt.textContent = `Step test failed${durationMs ? ` after ${durationMs}ms` : ''}: ${error || 'validation failed'}. Try Auto-fix again for another candidate.`;
+      }
+      setAutoFixStatus('Repair test failed. Trying next candidate is recommended.', 'error');
+      if (resumeBtn) resumeBtn.style.display = 'none';
+      $('accept-repair-btn').disabled = !testedLocator;
+      $('accept-repair-btn').textContent = 'Apply Fix & Test Step';
+      $('llm-result-label').textContent = 'Repair test failed';
+      $('sb-last-run').textContent = 'Last run: repair step failed';
+      $('sb-last-run').className = 'status-item warn';
+    }
+    return;
+  }
+
   if (state._fixValidating) {
     state._fixValidating = false;
     $('fix-apply-btn').disabled = !passed;
@@ -2056,7 +2204,7 @@ function renderStepList() {
       : stepRunState === 'pass'
       ? `<div class="step-inline-result pass">✓ ${escHtml(step._stepError || 'passed')}</div>`
       : stepRunState === 'fail'
-        ? `<div class="step-inline-result fail">✗ ${escHtml(step._stepError || 'failed')} <span style="color:var(--accent);cursor:pointer;" data-step-fix="${step.stepId}"> Fix →</span></div>`
+        ? `<div class="step-inline-result fail"><span class="step-inline-msg">✗ ${escHtml(step._stepError || 'failed')}</span><span class="step-inline-fix" data-step-fix="${step.stepId}">Fix</span></div>`
         : '';
 
     const showActions = state.panelMode === 'edit';
@@ -2088,16 +2236,7 @@ function renderStepList() {
       if (run) { runSingleStep(run.dataset.run); return; }
       if (fix) {
         const s = state.steps.find(st => st.stepId === fix.dataset.stepFix);
-        if (s) {
-          state.failingStepId = s.stepId;
-          $('fix-locator-input').value = s.locator || '';
-          $('fix-param-input').value = (s.params && s.params.text) || '';
-          $('fix-timeout-input').value = (s.params && s.params.timeoutMs) ? String(s.params.timeoutMs) : '';
-          const fs = $('fix-status');
-          if (fs) { fs.style.display = 'none'; fs.textContent = ''; }
-          $('fix-apply-btn').disabled = true;
-          setRepairMode('manual', { scroll: true });
-        }
+        if (s) openManualFixEditor(s);
         return;
       }
       state.selectedStepId = step.stepId === state.selectedStepId ? null : step.stepId;
@@ -2209,28 +2348,123 @@ function _showLlmElapsed() {
   }, 1000);
 }
 
-function startAutoFixFlow() {
-  if (!state.failingStepId) {
-    setAutoFixStatus('Cannot start Auto-fix: no failing step is selected.', 'error');
-    return;
+function clearForceFixAckTimer() {
+  if (state._forceFixAckTimer) {
+    clearTimeout(state._forceFixAckTimer);
+    state._forceFixAckTimer = null;
   }
-  state.forceFixActive = true;
-  state.proposedRepairLocator = null;
-  resetCascadeStages();
-  _startCascadeTimer();
-  $('cascade-spinner').style.display = '';
-  $('cascade-title').textContent = 'Auto-fix running… checking current locator';
-  $('cascade-progress').style.width = '0%';
-  $('llm-result-box').classList.remove('show');
-  const override = getFixOverride();
-  const sent = send({ type: 'force_fix', payload: { stepId: state.failingStepId, ...override } });
-  if (!sent) {
+}
+
+function clearForceFixDisconnectGraceTimer() {
+  if (state._forceFixDisconnectGraceTimer) {
+    clearTimeout(state._forceFixDisconnectGraceTimer);
+    state._forceFixDisconnectGraceTimer = null;
+  }
+}
+
+function startForceFixDisconnectGraceTimer() {
+  clearForceFixDisconnectGraceTimer();
+  state._forceFixDisconnectGraceTimer = setTimeout(() => {
+    state._forceFixDisconnectGraceTimer = null;
+    if (state.connected) return;
+    if (!(state.forceFixActive || state._forceFixAwaitingAck)) return;
     state.forceFixActive = false;
-    setAutoFixStatus('Cannot start Auto-fix: panel is disconnected from the runner.', 'error');
-    return;
-  }
+    state._forceFixAwaitingAck = false;
+    setAutoFixStatus('Auto-fix interrupted — connection remained unavailable. Please retry.', 'error');
+    const title = $('cascade-title');
+    if (title) title.textContent = 'Auto-fix interrupted — connection lost';
+    const spinner = $('cascade-spinner');
+    if (spinner) spinner.style.display = 'none';
+  }, 2500);
+}
+
+function startForceFixAckTimer() {
+  clearForceFixAckTimer();
+  state._forceFixAckTimer = setTimeout(() => {
+    state._forceFixAckTimer = null;
+    if (!state._forceFixAwaitingAck) return;
+    state._forceFixAwaitingAck = false;
+    state.forceFixActive = false;
+    setAutoFixStatus('Auto-fix did not receive backend acknowledgement. Please retry.', 'error');
+    const title = $('cascade-title');
+    if (title) title.textContent = 'Auto-fix not acknowledged by backend';
+    const spinner = $('cascade-spinner');
+    if (spinner) spinner.style.display = 'none';
+  }, 3000);
+}
+
+function openManualFixEditor(step) {
+  if (!step) return;
+  state.failingStepId = step.stepId;
+  state.proposedRepairLocator = null;
+  state.forceFixActive = false;
+  resetCascadeStages();
   setAutoFixStatus('');
-  setRepairMode('autoFix', { scroll: true });
+  $('fix-locator-input').value = step.locator || '';
+  $('fix-param-input').value = (step.params && step.params.text) || '';
+  $('fix-timeout-input').value = (step.params && step.params.timeoutMs) ? String(step.params.timeoutMs) : '';
+  const fs = $('fix-status');
+  if (fs) { fs.style.display = 'none'; fs.textContent = ''; }
+  state._repairTesting = false;
+  state._repairTestLocator = null;
+  $('fix-apply-btn').disabled = true;
+  setRepairMode('manual', { scroll: true });
+}
+
+function startAutoFixFlow() {
+  setAutoFixStatus('Auto-fix clicked. Preparing request…', 'running');
+  try {
+    if (state.forceFixActive) {
+      setAutoFixStatus('Auto-fix is already running for this failure.', 'running');
+      return;
+    }
+    if (!state.failingStepId) {
+      const lastFailed = state.steps.find(s => s && s._uiStatus === 'failed');
+      if (lastFailed) state.failingStepId = lastFailed.stepId;
+    }
+    if (!state.failingStepId) {
+      setAutoFixStatus('Cannot start Auto-fix: no failing step is selected.', 'error');
+      return;
+    }
+    state._activeRepairStepId = state.failingStepId;
+    state.forceFixActive = true;
+    state.proposedRepairLocator = null;
+    resetCascadeStages();
+    _startCascadeTimer();
+    const spinner = $('cascade-spinner');
+    if (spinner) spinner.style.display = '';
+    const title = $('cascade-title');
+    if (title) title.textContent = 'Auto-fix running… checking current locator';
+    const progress = $('cascade-progress');
+    if (progress) progress.style.width = '0%';
+    const llmResultBox = $('llm-result-box');
+    if (llmResultBox) llmResultBox.classList.remove('show');
+    const override = getFixOverride();
+    const payload = { stepId: state.failingStepId, ...override };
+    state._pendingForceFixPayload = payload;
+    state._forceFixResendAttempts = 0;
+    const sent = send({ type: 'force_fix', payload });
+    if (!sent) {
+      state.forceFixActive = false;
+      state._forceFixAwaitingAck = false;
+      clearForceFixAckTimer();
+      clearForceFixDisconnectGraceTimer();
+      setAutoFixStatus('Cannot start Auto-fix: panel is disconnected from the runner.', 'error');
+      return;
+    }
+    state._forceFixAwaitingAck = true;
+    startForceFixAckTimer();
+    setAutoFixStatus('Auto-fix request sent. Waiting for stage updates…', 'running');
+    setRepairMode('autoFix', { scroll: true });
+  } catch (err) {
+    state.forceFixActive = false;
+    state._forceFixAwaitingAck = false;
+    clearForceFixAckTimer();
+    clearForceFixDisconnectGraceTimer();
+    const msg = err && err.message ? err.message : String(err || 'unknown UI error');
+    setAutoFixStatus(`Auto-fix failed in UI before dispatch: ${msg}`, 'error');
+    try { console.error('startAutoFixFlow error', err); } catch(_) {}
+  }
 }
 
 $('fp-autofix-btn').addEventListener('click', startAutoFixFlow);
@@ -2259,6 +2493,12 @@ $('cascade-cancel').addEventListener('click', () => {
   const sub = $('cascade-sub');
   if (sub) { sub.style.display = 'none'; sub.textContent = ''; }
   setAutoFixStatus('');
+  state._forceFixAwaitingAck = false;
+  clearForceFixAckTimer();
+  clearForceFixDisconnectGraceTimer();
+  state._pendingForceFixPayload = null;
+  state._forceFixResendAttempts = 0;
+  state._activeRepairStepId = null;
   setRepairMode(state.panelMode === 'edit' ? 'manual' : state.failingStepId ? 'failed' : 'none');
   state.forceFixActive = false;
 });
@@ -2286,9 +2526,17 @@ function getFixOverride() {
 function closeFixSurface() {
   state.proposedRepairLocator = null;
   state.forceFixActive = false;
+  resetCascadeStages();
   setAutoFixStatus('');
+  state._forceFixAwaitingAck = false;
+  clearForceFixAckTimer();
+  clearForceFixDisconnectGraceTimer();
+  state._pendingForceFixPayload = null;
+  state._forceFixResendAttempts = 0;
   const fs = $('fix-status');
   if (fs) { fs.style.display = 'none'; fs.textContent = ''; }
+  state._repairTesting = false;
+  state._repairTestLocator = null;
   $('fix-apply-btn').disabled = true;
   setRepairMode(state.panelMode === 'failed' && state.failingStepId ? 'failed' : 'none');
 }
@@ -2299,6 +2547,7 @@ function onStepStatus(payload) {
   if (step) { step._uiStatus = status; if (error) step._error = error; }
   if (status === 'failed') {
     state.failingStepId = stepId;
+    state._activeRepairStepId = stepId;
     state.replayStatus = 'failed';
     setAutoFixStatus('');
     updateReplayStatusBar('failed', stepId, error);
@@ -2327,6 +2576,7 @@ function onPause(payload) {
 function onRunCompleted() {
   state.replayStatus = 'idle';
   state.failingStepId = null;
+  state._activeRepairStepId = null;
   updateReplayStatusBar('done', null, null);
   $('sb-last-run').textContent = 'Last run: all passed';
   $('sb-last-run').className = 'status-item ok';
@@ -2338,6 +2588,7 @@ function onRunCompleted() {
 function onRunAborted() {
   state.replayStatus = 'idle';
   state.failingStepId = null;
+  state._activeRepairStepId = null;
   $('sb-last-run').textContent = 'Last run: stopped';
   $('sb-last-run').className = 'status-item warn';
 }
@@ -2352,8 +2603,12 @@ function updateReplayControls() {
 // ── Fix editor ────────────────────────────────────────────────────────────────
 $('fix-validate-btn').addEventListener('click', () => {
   const locator = $('fix-locator-input').value.trim();
-  const step = state.steps.find(s => s.stepId === state.failingStepId);
-  if (!locator || !step) return;
+  const step = getActiveRepairStep();
+  if (!locator || !step) {
+    setAutoFixStatus('Cannot validate fix: no step context found.', 'error');
+    return;
+  }
+  state._activeRepairStepId = step.stepId;
   const timeoutRaw = $('fix-timeout-input').value;
   const timeoutMs = Number(timeoutRaw);
   const params = { ...(step.params || {}) };
@@ -2372,13 +2627,21 @@ $('fix-validate-btn').addEventListener('click', () => {
 $('fix-apply-btn').addEventListener('click', () => {
   const locator = $('fix-locator-input').value.trim();
   if (!locator) return;
+  const step = getActiveRepairStep();
+  if (!step) {
+    setAutoFixStatus('Cannot apply fix: no step context found.', 'error');
+    return;
+  }
+  const targetStepId = step.stepId;
+  state._activeRepairStepId = targetStepId;
   const paramVal = $('fix-param-input').value;
   const timeoutRaw = $('fix-timeout-input').value;
   const timeoutMs = Number(timeoutRaw);
   let params = undefined;
   if (paramVal) params = { text: paramVal, value: paramVal };
   if (Number.isFinite(timeoutMs) && timeoutMs > 0) params = { ...(params || {}), timeoutMs };
-  send({ type: 'resume', payload: { overrideStep: { stepId: state.failingStepId, locator, params } } });
+  applyLocalStepOverride(targetStepId, locator, params || null);
+  send({ type: 'resume', payload: { overrideStep: { stepId: targetStepId, locator, params } } });
   setRepairMode('none');
   state.replayStatus = 'running';
   setPanelMode('replaying');
@@ -2389,9 +2652,15 @@ $('fix-close-btn').addEventListener('click', closeFixSurface);
 
 // ── Force-fix progress ────────────────────────────────────────────────────────
 function onForceFixProgress(payload) {
-  const { stage, status, repaired, locator, explanation } = payload;
+  const { stage, status, repaired, locator, explanation, meta } = payload;
+  if (state._forceFixAwaitingAck) {
+    state._forceFixAwaitingAck = false;
+    clearForceFixAckTimer();
+  }
+  clearForceFixDisconnectGraceTimer();
   const progressMap = { 1: 25, 2: 50, 3: 75, 4: 100 };
   $('cascade-progress').style.width = progressMap[stage] + '%';
+  const sub = $('cascade-sub');
 
   const ico = $(`s${stage}-ico`);
   const res = $(`s${stage}-res`);
@@ -2408,19 +2677,28 @@ function onForceFixProgress(payload) {
   if (stage === 4 && status === 'running') {
     $('cascade-title').textContent = 'Stage 4 — LLM analyzing…';
     _showLlmElapsed();
+  } else if (status === 'running' && explanation && sub) {
+    sub.style.display = '';
+    sub.textContent = explanation;
   }
+
+  if (status === 'running') {
+    const stageMsg = explanation || `Auto-fix running stage ${stage}…`;
+    setAutoFixStatus(stageMsg, 'running');
+  }
+
+  if (stage === 4) renderRepairTrace(meta || null);
 
   // Any terminal state — stop the elapsed timer
   if (status === 'pass' || (stage === 4 && status === 'fail')) {
     _stopCascadeTimer();
-    const sub = $('cascade-sub');
     if (sub) { sub.style.display = 'none'; sub.textContent = ''; }
   }
 
   if (repaired) {
     state.forceFixActive = false;
     state.proposedRepairLocator = locator || null;
-    setAutoFixStatus('');
+    setAutoFixStatus('Auto-fix found a working locator. Apply and test this step.', 'running');
     $('cascade-spinner').style.display = 'none';
     $('cascade-title').textContent = `Fixed — confirm to resume`;
     $('cascade-title').style.color = 'var(--success)';
@@ -2431,8 +2709,9 @@ function onForceFixProgress(payload) {
       $('llm-selector-display').textContent = locator;
       $('llm-selector-display').style.display = 'block';
     }
-    $('accept-repair-btn').textContent = 'Apply & Resume';
+    $('accept-repair-btn').textContent = 'Apply Fix & Test Step';
     $('accept-repair-btn').disabled = !locator;
+    $('resume-after-test-btn').style.display = 'none';
     $('close-repair-btn').textContent = state.panelMode === 'edit' ? 'Close' : 'Back';
   }
 
@@ -2449,8 +2728,9 @@ function onForceFixProgress(payload) {
     $('cascade-spinner').style.display = 'none';
     if (!repaired) {
       state.proposedRepairLocator = null;
-      setAutoFixStatus('');
+      setAutoFixStatus(`Auto-fix failed: ${explanation}`, 'error');
       $('accept-repair-btn').disabled = true;
+      $('resume-after-test-btn').style.display = 'none';
       $('cascade-title').textContent = 'Force-fix — LLM response';
       $('close-repair-btn').textContent = 'Back';
     }
@@ -2462,45 +2742,194 @@ function onForceFixProgress(payload) {
     $('cascade-title').style.color = 'var(--fg-3)';
     state.forceFixActive = false;
     state.proposedRepairLocator = null;
-    setAutoFixStatus('');
+    setAutoFixStatus('Auto-fix exhausted all stages without a working locator.', 'error');
     setRepairMode('llmResult', { scroll: true });
     $('llm-result-label').textContent = 'No automatic repair';
     $('llm-result-txt').textContent = 'Auto-fix could not find a working locator. Use Manual fix to edit and validate this step.';
     $('llm-selector-display').style.display = 'none';
     $('accept-repair-btn').disabled = true;
+    $('resume-after-test-btn').style.display = 'none';
     $('close-repair-btn').textContent = 'Back';
   }
+
+  if (repaired || (stage === 4 && status === 'fail')) {
+    state._pendingForceFixPayload = null;
+    state._forceFixResendAttempts = 0;
+    if (stage === 4 && status === 'fail') state._activeRepairStepId = null;
+  }
+}
+
+function renderRepairTrace(meta) {
+  const traceBox = $('llm-trace-box');
+  const traceTxt = $('llm-trace-txt');
+  if (!traceBox || !traceTxt) return;
+  if (!meta || typeof meta !== 'object') {
+    traceBox.style.display = 'none';
+    traceTxt.textContent = '';
+    return;
+  }
+  const lines = [];
+  const pushSection = (title, content) => {
+    if (!content) return;
+    lines.push(`## ${title}`);
+    lines.push(content);
+  };
+  const jsonPreview = (obj, maxChars = 1200) => {
+    try {
+      const txt = JSON.stringify(obj, null, 2);
+      return txt.length > maxChars ? `${txt.slice(0, maxChars)}\n...` : txt;
+    } catch (_) {
+      return String(obj || '');
+    }
+  };
+  if (meta.llmCalled === true) lines.push('LLM called: yes');
+  else if (meta.llmCalled === false) lines.push('LLM called: no');
+  if (meta.verificationStatus) lines.push(`Verification: ${String(meta.verificationStatus).replace(/_/g, ' ')}`);
+  const input = meta.inputSummary;
+  if (input && typeof input === 'object') {
+    if (input.action) lines.push(`Action: ${input.action}`);
+    if (input.failedLocator) lines.push(`Failed locator: ${String(input.failedLocator).slice(0, 140)}`);
+    if (Array.isArray(input.descriptorKeys) && input.descriptorKeys.length) {
+      lines.push(`Descriptor fields: ${input.descriptorKeys.join(', ')}`);
+    }
+    if (Number.isFinite(input.domChars)) lines.push(`DOM context chars: ${input.domChars}`);
+    if (Number.isFinite(input.alreadyTriedCount)) lines.push(`Selectors tried before LLM: ${input.alreadyTriedCount}`);
+    if (input.hasUserHint) lines.push('User hint: provided');
+    if (input.domStatus) lines.push(`DOM status: ${String(input.domStatus).replace(/_/g, ' ')}`);
+  }
+  const domDiagnosis = meta.domDiagnosis;
+  if (domDiagnosis && typeof domDiagnosis === 'object') {
+    const diagLines = [];
+    if (domDiagnosis.status) diagLines.push(`status: ${domDiagnosis.status}`);
+    if (Number.isFinite(domDiagnosis.selectorMatches)) diagLines.push(`selectorMatches: ${domDiagnosis.selectorMatches}`);
+    if (Number.isFinite(domDiagnosis.strongSignalMatches)) diagLines.push(`strongSignalMatches: ${domDiagnosis.strongSignalMatches}`);
+    if (Number.isFinite(domDiagnosis.textSignalMatches)) diagLines.push(`textSignalMatches: ${domDiagnosis.textSignalMatches}`);
+    if (domDiagnosis.message) diagLines.push(`message: ${domDiagnosis.message}`);
+    pushSection('DOM Diagnosis', diagLines.join('\n'));
+  }
+  if (meta.llmRequest && typeof meta.llmRequest === 'object') {
+    pushSection('LLM Request Preview', jsonPreview(meta.llmRequest, 1800));
+  }
+  if (meta.llmResponse && typeof meta.llmResponse === 'object') {
+    pushSection('LLM Response Preview', jsonPreview(meta.llmResponse, 1400));
+  }
+  traceTxt.textContent = lines.join('\n');
+  traceBox.style.display = lines.length ? 'block' : 'none';
+}
+
+function onRepairApplied(payload) {
+  if (!payload) return;
+  applyLocalStepOverride(payload.stepId, payload.locator, payload.params);
+  const msg = payload.locator
+    ? `Applied to step ${payload.stepId || ''} and resumed with locator: ${String(payload.locator).slice(0, 120)}`
+    : `Applied to step ${payload.stepId || ''} and resumed`;
+  setAutoFixStatus(msg, 'running');
+  $('sb-last-run').textContent = 'Last run: repair applied';
+  $('sb-last-run').className = 'status-item ok';
+  const status = $('repair-apply-status');
+  if (status) {
+    status.style.display = 'block';
+    status.textContent = msg.trim();
+  }
+  const fixStatus = $('fix-status');
+  if (fixStatus && state.repairMode === 'manual') {
+    fixStatus.style.display = 'block';
+    fixStatus.style.color = 'var(--success)';
+    fixStatus.textContent = msg.trim();
+  }
+}
+
+function applyLocalStepOverride(stepId, locator, params) {
+  if (!stepId) return;
+  const step = state.steps.find(s => s.stepId === stepId);
+  if (!step) return;
+  if (typeof locator === 'string' && locator.trim()) {
+    step.locator = locator.trim();
+  }
+  if (params && typeof params === 'object') {
+    step.params = { ...(step.params || {}), ...params };
+  }
+  renderStepList();
+}
+
+function getActiveRepairStepId() {
+  return state.failingStepId || state._activeRepairStepId || null;
+}
+
+function getActiveRepairStep() {
+  const primaryId = getActiveRepairStepId();
+  if (primaryId) {
+    const byId = state.steps.find(s => s.stepId === primaryId);
+    if (byId) return byId;
+  }
+  const failed = state.steps.find(s => s && s._uiStatus === 'failed');
+  if (failed) return failed;
+  return state.steps.length ? state.steps[0] : null;
 }
 
 $('accept-repair-btn').addEventListener('click', () => {
   const locator = state.proposedRepairLocator || $('llm-selector-display').textContent;
   if (!locator) return;
-  send({ type: 'accept_llm_repair', payload: { stepId: state.failingStepId, locator } });
-  setAutoFixStatus('');
+  const step = getActiveRepairStep();
+  if (!step) {
+    setAutoFixStatus('Cannot apply repair: no step context found. Re-run the failing step and try again.', 'error');
+    return;
+  }
+  const targetStepId = step.stepId;
+  state._activeRepairStepId = targetStepId;
+  const params = { ...(step.params || {}) };
+  applyLocalStepOverride(targetStepId, locator, params);
+  state._repairTesting = false;
+  state._repairTestLocator = null;
+  $('resume-after-test-btn').style.display = 'none';
+  $('accept-repair-btn').disabled = true;
+  $('accept-repair-btn').textContent = 'Applied';
+  $('llm-result-label').textContent = 'Repair applied';
+  $('llm-result-txt').textContent = 'Applied to the failing step. Replaying from this step now to validate.';
+  setAutoFixStatus('Applied auto-fix. Replaying from failing step to validate…', 'running');
   setRepairMode('none');
-  // Resume replay with the repaired locator
   state.replayStatus = 'running';
-  send({ type: 'resume', payload: { overrideStep: { stepId: state.failingStepId, locator } } });
+  send({ type: 'resume', payload: { overrideStep: { stepId: targetStepId, locator, params } } });
   setPanelMode('replaying');
   updateReplayStatusBar('running', null, null);
 });
 
 $('try-manual-btn').addEventListener('click', () => {
-  const step = state.steps.find(s => s.stepId === state.failingStepId);
-  if (state.proposedRepairLocator) $('fix-locator-input').value = state.proposedRepairLocator;
-  else if (step) $('fix-locator-input').value = step.locator || '';
-  if (step) {
-    $('fix-param-input').value = (step.params && step.params.text) || '';
-    $('fix-timeout-input').value = (step.params && step.params.timeoutMs) ? String(step.params.timeoutMs) : '';
+  const step = getActiveRepairStep();
+  if (!step) {
+    setAutoFixStatus('Cannot open manual fix: no step context found.', 'error');
+    return;
   }
-  setRepairMode('manual', { scroll: true });
+  state._activeRepairStepId = step.stepId;
+  const proposed = state.proposedRepairLocator;
+  openManualFixEditor(step);
+  if (proposed) $('fix-locator-input').value = proposed;
+});
+
+$('resume-after-test-btn').addEventListener('click', () => {
+  const locator = state.proposedRepairLocator || $('llm-selector-display').textContent;
+  if (!locator) return;
+  const step = getActiveRepairStep();
+  if (!step) {
+    setAutoFixStatus('Cannot resume with repair: no step context found.', 'error');
+    return;
+  }
+  const targetStepId = step.stepId;
+  state._activeRepairStepId = targetStepId;
+  applyLocalStepOverride(targetStepId, locator, null);
   setAutoFixStatus('');
-  state.forceFixActive = false;
+  setRepairMode('none');
+  state.replayStatus = 'running';
+  send({ type: 'resume', payload: { overrideStep: { stepId: targetStepId, locator } } });
+  setPanelMode('replaying');
+  updateReplayStatusBar('running', null, null);
 });
 
 $('close-repair-btn').addEventListener('click', () => {
   state.proposedRepairLocator = null;
   state.forceFixActive = false;
+  state._activeRepairStepId = null;
+  resetCascadeStages();
   setAutoFixStatus('');
   setRepairMode(state.panelMode === 'failed' && state.failingStepId ? 'failed' : 'none');
 });
@@ -2512,13 +2941,40 @@ function resetCascadeStages() {
     if (res) { res.className = 'stage-result'; res.textContent = ''; }
   });
   $('cascade-title').style.color = '';
-  $('accept-repair-btn').disabled = true;
-  $('accept-repair-btn').textContent = 'Apply & Resume';
-  $('close-repair-btn').textContent = 'Close';
-  $('llm-result-label').textContent = 'LLM Response';
-  $('llm-selector-display').style.display = 'none';
-  $('llm-selector-display').textContent = '';
-  $('llm-result-txt').textContent = '';
+  const acceptBtn = $('accept-repair-btn');
+  if (acceptBtn) {
+    acceptBtn.disabled = true;
+    acceptBtn.textContent = 'Apply Fix & Test Step';
+  }
+  const resumeBtn = $('resume-after-test-btn');
+  if (resumeBtn) resumeBtn.style.display = 'none';
+  const closeBtn = $('close-repair-btn');
+  if (closeBtn) closeBtn.textContent = 'Close';
+  const llmLabel = $('llm-result-label');
+  if (llmLabel) llmLabel.textContent = 'LLM Response';
+  const llmSelector = $('llm-selector-display');
+  if (llmSelector) {
+    llmSelector.style.display = 'none';
+    llmSelector.textContent = '';
+  }
+  const llmTxt = $('llm-result-txt');
+  if (llmTxt) llmTxt.textContent = '';
+  const traceBox = $('llm-trace-box');
+  if (traceBox) traceBox.style.display = 'none';
+  const traceTxt = $('llm-trace-txt');
+  if (traceTxt) traceTxt.textContent = '';
+  const applyStatus = $('repair-apply-status');
+  if (applyStatus) {
+    applyStatus.style.display = 'none';
+    applyStatus.textContent = '';
+  }
+  state._repairTesting = false;
+  state._repairTestLocator = null;
+  state._forceFixAwaitingAck = false;
+  clearForceFixAckTimer();
+  clearForceFixDisconnectGraceTimer();
+  state._pendingForceFixPayload = null;
+  state._forceFixResendAttempts = 0;
   const sub = $('cascade-sub');
   if (sub) { sub.style.display = 'none'; sub.textContent = ''; }
 }

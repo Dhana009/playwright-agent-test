@@ -12,7 +12,7 @@ from playwright.async_api import Page
 
 logger = logging.getLogger(__name__)
 
-ProgressCallback = Callable[[int, str, bool, str | None, str | None], Coroutine[Any, Any, None]]
+ProgressCallback = Callable[[int, str, bool, str | None, str | None, dict[str, Any] | None], Coroutine[Any, Any, None]]
 
 
 @dataclass
@@ -80,50 +80,118 @@ async def run_force_fix_cascade(
         repaired: bool = False,
         locator: str | None = None,
         explanation: str | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         if on_progress:
-            await on_progress(stage, status, repaired, locator, explanation)
+            await on_progress(stage, status, repaired, locator, explanation, meta)
 
     tried: list[str] = [primary_selector] if primary_selector else []
+    deterministic_passes: list[tuple[int, str]] = []
 
     # ── Stage 1: retry primary with wait ─────────────────────────────────
-    await notify(1, "running")
+    await notify(
+        1,
+        "running",
+        explanation="Trying current locator with short retry window.",
+        meta={"activeCandidate": primary_selector or "", "stageAttempt": 1},
+    )
+    stage1_passed = False
     await asyncio.sleep(0.5)
     if primary_selector and await _probe_selector(page, primary_selector):
-        await notify(1, "pass", repaired=True, locator=primary_selector)
-        return ForceFixResult(repaired=True, locator=primary_selector, stage=1)
-    # Try again after a longer wait (element might be loading)
-    await asyncio.sleep(1.0)
-    if primary_selector and await _probe_selector(page, primary_selector):
-        await notify(1, "pass", repaired=True, locator=primary_selector, explanation="Resolved after waiting for page load")
-        return ForceFixResult(repaired=True, locator=primary_selector, stage=1)
-    await notify(1, "fail")
+        stage1_passed = True
+        deterministic_passes.append((1, primary_selector))
+        await notify(
+            1,
+            "pass",
+            locator=primary_selector,
+            explanation="Primary locator matched. Continuing to evaluate stronger deterministic options.",
+        )
+    if not stage1_passed:
+        # Try again after a longer wait (element might be loading)
+        await asyncio.sleep(1.0)
+        if primary_selector and await _probe_selector(page, primary_selector):
+            stage1_passed = True
+            deterministic_passes.append((1, primary_selector))
+            await notify(
+                1,
+                "pass",
+                locator=primary_selector,
+                explanation="Primary locator matched after waiting. Continuing to evaluate stronger deterministic options.",
+            )
+    if not stage1_passed:
+        await notify(1, "fail")
 
     # ── Stage 2: fallback selectors ───────────────────────────────────────
-    await notify(2, "running")
-    for selector in fallback_selectors:
+    await notify(
+        2,
+        "running",
+        explanation=f"Trying fallback locators ({len([s for s in fallback_selectors if s])} candidates).",
+    )
+    stage2_passed = False
+    for idx, selector in enumerate(fallback_selectors, start=1):
         if not selector or not selector.strip():
             continue
+        await notify(
+            2,
+            "running",
+            explanation=f"Fallback {idx}: trying {selector[:140]}",
+            meta={"activeCandidate": selector, "stageAttempt": idx},
+        )
         if selector not in tried:
             tried.append(selector)
         if await _probe_selector(page, selector):
-            await notify(2, "pass", repaired=True, locator=selector)
-            return ForceFixResult(repaired=True, locator=selector, stage=2, candidates_tried=tried)
-    await notify(2, "fail")
+            stage2_passed = True
+            if (2, selector) not in deterministic_passes:
+                deterministic_passes.append((2, selector))
+            await notify(2, "pass", locator=selector)
+    if not stage2_passed:
+        await notify(2, "fail")
 
     # ── Stage 3: semantic alternates ──────────────────────────────────────
-    await notify(3, "running")
+    await notify(3, "running", explanation="Generating semantic alternates from descriptor.")
+    stage3_passed = False
     if target_descriptor:
         alternates = _generate_alternates(target_descriptor)
-        for selector in alternates:
+        for idx, selector in enumerate(alternates, start=1):
             if not selector:
                 continue
+            await notify(
+                3,
+                "running",
+                explanation=f"Alternate {idx}: trying {selector[:140]}",
+                meta={"activeCandidate": selector, "stageAttempt": idx},
+            )
             if selector not in tried:
                 tried.append(selector)
             if await _probe_selector(page, selector):
-                await notify(3, "pass", repaired=True, locator=selector)
-                return ForceFixResult(repaired=True, locator=selector, stage=3, candidates_tried=tried)
-    await notify(3, "fail")
+                stage3_passed = True
+                if (3, selector) not in deterministic_passes:
+                    deterministic_passes.append((3, selector))
+                await notify(3, "pass", locator=selector)
+    if not stage3_passed:
+        await notify(3, "fail")
+
+    if deterministic_passes:
+        best_stage, best_locator = _select_best_deterministic_candidate(deterministic_passes)
+        best_score = _selector_stability_score(best_locator)
+        await notify(
+            best_stage,
+            "pass",
+            repaired=True,
+            locator=best_locator,
+            explanation=(
+                "Evaluated stages 1-3 and selected the strongest deterministic locator. "
+                f"stability_score={best_score}"
+            ),
+            meta={"selectedBy": "deterministic_scoring", "stabilityScore": best_score},
+        )
+        return ForceFixResult(
+            repaired=True,
+            locator=best_locator,
+            stage=best_stage,
+            explanation=f"Selected best deterministic locator (score={best_score}).",
+            candidates_tried=tried,
+        )
 
     # ── Stage 4: LLM ─────────────────────────────────────────────────────
     if llm_provider is None:
@@ -133,12 +201,49 @@ async def run_force_fix_cascade(
             "but none matched a visible element. LLM repair is not configured, so "
             "there is no stage 4 diagnosis available. Configure an LLM or use Manual fix."
         )
-        await notify(4, "fail", explanation=explanation)
+        await notify(
+            4,
+            "fail",
+            explanation=explanation,
+            meta={"llmCalled": False, "verificationStatus": "not_run"},
+        )
         return ForceFixResult(repaired=False, stage=4, explanation=explanation, candidates_tried=tried)
 
-    await notify(4, "running")
+    await notify(4, "running", meta={"llmCalled": True, "verificationStatus": "running"})
     try:
         dom_snippet = await _capture_dom_snippet(page, primary_selector, target_descriptor)
+        dom_diagnosis = await _diagnose_dom_presence(page, primary_selector, target_descriptor)
+        llm_request = {
+            "action": action,
+            "failedLocator": primary_selector,
+            "alreadyTried": [s for s in tried if s][:24],
+            "targetDescriptor": target_descriptor or {},
+            "params": params or {},
+            "userHint": (user_hint or "")[:1200],
+            "domSnippetPreview": (dom_snippet or "")[:1600],
+            "domDiagnosis": dom_diagnosis,
+        }
+        input_summary = {
+            "action": action,
+            "failedLocator": primary_selector,
+            "alreadyTriedCount": len([s for s in tried if s]),
+            "descriptorKeys": sorted((target_descriptor or {}).keys()),
+            "domChars": len(dom_snippet or ""),
+            "hasUserHint": bool(user_hint and user_hint.strip()),
+            "domStatus": dom_diagnosis.get("status", "inconclusive"),
+        }
+        await notify(
+            4,
+            "running",
+            meta={
+                "llmCalled": True,
+                "verificationStatus": "running",
+                "inputSummary": input_summary,
+                "domDiagnosis": dom_diagnosis,
+                "llmRequest": llm_request,
+            },
+            explanation="Calling LLM with DOM context and prior attempts.",
+        )
         llm_result = await _ask_llm_repair(
             llm_provider=llm_provider,
             failed_locator=primary_selector,
@@ -148,6 +253,7 @@ async def run_force_fix_cascade(
             target_descriptor=target_descriptor,
             params=params or {},
             user_hint=user_hint,
+            dom_diagnosis=dom_diagnosis,
         )
 
         candidates = llm_result.get("candidates") or []
@@ -155,12 +261,34 @@ async def run_force_fix_cascade(
         if not candidates and llm_result.get("locator"):
             candidates = [llm_result["locator"]]
         explanation = llm_result.get("explanation", "")
+        llm_response = {
+            "candidateCount": len([c for c in candidates if isinstance(c, str) and c.strip()]),
+            "topCandidates": [c for c in candidates if isinstance(c, str) and c.strip()][:5],
+            "explanation": str(explanation or "")[:280],
+            "domStatus": llm_result.get("domStatus") or dom_diagnosis.get("status", "inconclusive"),
+            "rawResponsePreview": str(llm_result.get("_raw_response_preview") or "")[:1200],
+        }
 
         working_locator: str | None = None
-        for candidate in candidates:
+        for idx, candidate in enumerate(candidates, start=1):
             if not candidate or not isinstance(candidate, str):
                 continue
             candidate = candidate.strip()
+            await notify(
+                4,
+                "running",
+                explanation=f"LLM candidate {idx}: verifying {candidate[:140]}",
+                meta={
+                    "llmCalled": True,
+                    "verificationStatus": "running",
+                    "inputSummary": input_summary,
+                    "stageAttempt": idx,
+                    "activeCandidate": candidate,
+                    "domDiagnosis": dom_diagnosis,
+                    "llmRequest": llm_request,
+                    "llmResponse": llm_response,
+                },
+            )
             if candidate not in tried:
                 tried.append(candidate)
             if await _probe_selector(page, candidate):
@@ -168,21 +296,58 @@ async def run_force_fix_cascade(
                 break
 
         if working_locator:
-            await notify(4, "pass", repaired=True, locator=working_locator, explanation=explanation)
+            await notify(
+                4,
+                "pass",
+                repaired=True,
+                locator=working_locator,
+                explanation=explanation,
+                meta={
+                    "llmCalled": True,
+                    "verificationStatus": "verified",
+                    "inputSummary": input_summary,
+                    "domDiagnosis": dom_diagnosis,
+                    "llmRequest": llm_request,
+                    "llmResponse": llm_response,
+                },
+            )
             return ForceFixResult(repaired=True, locator=working_locator, stage=4, explanation=explanation, candidates_tried=tried)
 
         # None of the LLM candidates worked
         best_candidate = candidates[0] if candidates else None
         fail_msg = explanation or "LLM suggestions did not match any visible element on the page."
+        if dom_diagnosis.get("status") == "likely_missing":
+            fail_msg = (
+                "Element appears missing from current DOM: "
+                + str(dom_diagnosis.get("message") or "").strip()
+            )
         if best_candidate:
             fail_msg = f"Best candidate '{best_candidate}' not found. {fail_msg}"
-        await notify(4, "fail", locator=best_candidate, explanation=fail_msg)
+        await notify(
+            4,
+            "fail",
+            locator=best_candidate,
+            explanation=fail_msg,
+            meta={
+                "llmCalled": True,
+                "verificationStatus": "not_verified",
+                "inputSummary": input_summary,
+                "domDiagnosis": dom_diagnosis,
+                "llmRequest": llm_request,
+                "llmResponse": llm_response,
+            },
+        )
         return ForceFixResult(repaired=False, stage=4, locator=best_candidate, explanation=fail_msg, candidates_tried=tried)
 
     except Exception as exc:
         logger.error("force_fix_llm_error step_id=%s error=%s", step_id, str(exc))
         err_msg = f"LLM call failed: {exc}"
-        await notify(4, "fail", explanation=err_msg)
+        await notify(
+            4,
+            "fail",
+            explanation=err_msg,
+            meta={"llmCalled": True, "verificationStatus": "error"},
+        )
         return ForceFixResult(repaired=False, stage=4, candidates_tried=tried)
 
 
@@ -278,6 +443,54 @@ def _generate_alternates(descriptor: dict[str, Any]) -> list[str]:
     return alternates
 
 
+def _selector_stability_score(selector: str) -> int:
+    s = (selector or "").strip().lower()
+    if not s:
+        return -100
+    score = 0
+    if "data-testid" in s or "data-test-id" in s or "data-qa" in s:
+        score += 60
+    if "aria-label" in s:
+        score += 45
+    if "[role=" in s or "role(" in s:
+        score += 35
+    if "[name=" in s:
+        score += 25
+    if "[placeholder=" in s:
+        score += 22
+    if s.startswith("#") or "[id=" in s:
+        score += 18
+    if "has-text(" in s or s.startswith('text="'):
+        score += 16
+    if s.startswith("//") or s.startswith("xpath="):
+        score -= 18
+    if "nth-child" in s or "nth=" in s:
+        score -= 22
+    if re.search(r"\.[a-z0-9]{6,}$", s):
+        score -= 10
+    score -= min(len(s) // 40, 8)
+    return score
+
+
+def _select_best_deterministic_candidate(passes: list[tuple[int, str]]) -> tuple[int, str]:
+    # De-duplicate by selector and keep earliest stage occurrence.
+    first_stage_by_selector: dict[str, int] = {}
+    for stage, selector in passes:
+        if selector not in first_stage_by_selector:
+            first_stage_by_selector[selector] = stage
+    best_stage = 0
+    best_selector = ""
+    best_score = -10_000
+    for selector, stage in first_stage_by_selector.items():
+        score = _selector_stability_score(selector)
+        # Tie-breaker: prefer earlier stage if score equal.
+        if score > best_score or (score == best_score and (best_stage == 0 or stage < best_stage)):
+            best_score = score
+            best_stage = stage
+            best_selector = selector
+    return best_stage, best_selector
+
+
 async def _capture_dom_snippet(
     page: Page,
     failed_selector: str,
@@ -345,6 +558,82 @@ async def _capture_dom_snippet(
         return ""
 
 
+async def _diagnose_dom_presence(
+    page: Page,
+    failed_selector: str,
+    descriptor: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Conservative DOM diagnosis to avoid false 'element missing' alarms."""
+    try:
+        result = await page.evaluate("""([selector, descriptor]) => {
+            const out = {
+                status: "inconclusive",
+                selectorMatches: 0,
+                strongSignalMatches: 0,
+                textSignalMatches: 0,
+                hasDescriptorSignals: false,
+                message: "",
+            };
+            const safeCount = (sel) => {
+                if (!sel) return 0;
+                try { return document.querySelectorAll(sel).length; } catch (_) { return 0; }
+            };
+
+            out.selectorMatches = safeCount(selector);
+            const testid = (descriptor && (descriptor.testid || descriptor.testId)) || "";
+            const aria = (descriptor && (descriptor.ariaLabel || descriptor.aria_label)) || "";
+            const elId = (descriptor && descriptor.id) || "";
+            const name = (descriptor && descriptor.name) || "";
+            const text = ((descriptor && descriptor.text) || "").trim();
+            const hasSignals = Boolean(testid || aria || elId || name || text);
+            out.hasDescriptorSignals = hasSignals;
+
+            let strong = 0;
+            if (testid) {
+                strong += safeCount('[data-testid="' + testid + '"]');
+                strong += safeCount('[data-test-id="' + testid + '"]');
+                strong += safeCount('[data-qa="' + testid + '"]');
+            }
+            if (aria) strong += safeCount('[aria-label="' + aria + '"]');
+            if (elId) strong += safeCount('[id="' + elId + '"]');
+            if (name) strong += safeCount('[name="' + name + '"]');
+            out.strongSignalMatches = strong;
+
+            let textMatches = 0;
+            if (text.length >= 3) {
+                const wanted = text.slice(0, 40).toLowerCase();
+                const nodes = document.querySelectorAll('button,a,input,select,textarea,label,[role]');
+                for (const node of nodes) {
+                    const t = (node.innerText || node.textContent || '').trim().toLowerCase();
+                    if (t && t.includes(wanted)) textMatches += 1;
+                }
+            }
+            out.textSignalMatches = textMatches;
+
+            if (out.selectorMatches > 0 || out.strongSignalMatches > 0 || out.textSignalMatches > 0) {
+                out.status = "present_or_shifted";
+                out.message = "Some target signals are still present in DOM, but locator strategy likely changed.";
+                return out;
+            }
+
+            if (hasSignals) {
+                out.status = "likely_missing";
+                out.message = "No target signals found in current DOM. The expected element is likely not rendered on this page/state.";
+                return out;
+            }
+
+            out.status = "inconclusive";
+            out.message = "Target descriptor is sparse; cannot confidently determine DOM absence.";
+            return out;
+        }""", [failed_selector, descriptor or {}])
+        if isinstance(result, dict):
+            return result
+        return {"status": "inconclusive", "message": "DOM diagnosis unavailable."}
+    except Exception as exc:
+        logger.debug("dom_diagnosis_error error=%s", str(exc))
+        return {"status": "inconclusive", "message": "DOM diagnosis failed."}
+
+
 def _extract_llm_json(text: str) -> dict[str, Any]:
     """Robustly extract a JSON object from an LLM response, handling markdown fences."""
     stripped = text.strip()
@@ -389,6 +678,7 @@ async def _ask_llm_repair(
     target_descriptor: dict[str, Any] | None,
     params: dict[str, Any],
     user_hint: str | None = None,
+    dom_diagnosis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Ask the LLM to repair a failing locator.
@@ -414,51 +704,40 @@ async def _ask_llm_repair(
     tried_block = "\n".join(f"  - {s}" for s in already_tried if s) or "  (none)"
     hint_block = f"\n## User context\n{user_hint.strip()}\n" if user_hint and user_hint.strip() else ""
 
-    prompt = f"""You are a senior Playwright test automation engineer. A recorded browser step has broken because its locator no longer finds the element.
+    context_payload = {
+        "action": action,
+        "failed_selector": failed_locator,
+        "action_params": {k: v for k, v in params.items() if v and k in ("text", "value", "key", "url")},
+        "target_descriptor": target_descriptor or {},
+        "already_tried_selectors": [s for s in already_tried if s],
+        "user_hint": (user_hint or "").strip(),
+        "dom_diagnosis": dom_diagnosis or {},
+        "dom_snippet": dom_snippet[:5000],
+    }
+    context_json = json.dumps(context_payload, ensure_ascii=True, indent=2)
+    system_prompt = f"""You are a senior Playwright locator-repair engine.
+Your job: propose safe, unique selectors for a broken recorded step, using the full context below.
 
-## What failed
-Action: {action}{param_block}
-Failed selector: {failed_locator!r}{hint_block}
+Rules:
+1) Never repeat selectors from already_tried_selectors.
+2) Prefer stable selectors in this order:
+   data-testid/data-test-id/data-qa -> aria-label -> role+name -> text -> placeholder -> name -> id -> scoped CSS -> XPath.
+3) Avoid hash-like CSS classes and fragile nth-child chains unless absolutely necessary.
+4) If the DOM evidence indicates the target element is missing, return no candidates and explain that honestly.
+5) Output ONLY a JSON object with keys:
+   - candidates: string[] (max 5)
+   - explanation: string
+   - domStatus: one of "present_or_shifted", "likely_missing", "inconclusive"
 
-## Target element (recorded properties)
-{desc_block}
-
-## Selectors already tried (all failed)
-{tried_block}
-
-## Live DOM around the target area
-```html
-{dom_snippet[:5000]}
-```
-
-## Your task
-Examine the DOM above and identify the element that best matches the target description.
-Return a JSON object with:
-- "candidates": an ordered array of up to 5 Playwright selector strings, best first
-- "explanation": a short explanation of what changed and why your top candidate should work
-
-Selector priority (use the first one that applies):
-1. data-testid / data-test-id / data-qa attribute
-2. aria-label attribute
-3. role + accessible name: role("button", {{ name: "Submit" }})
-4. Playwright text locator: text="Submit"
-5. placeholder attribute for inputs
-6. name attribute
-7. CSS id selector: #element-id
-8. Scoped CSS (last resort, avoid generic class names)
-9. XPath (absolute last resort only)
-
-IMPORTANT:
-- Do NOT repeat selectors from the "already tried" list
-- Do NOT use CSS class names that look auto-generated (hash-like, e.g. "sc-abc123", "css-xyz")
-- Prefer selectors that uniquely identify ONE element
-- Return ONLY the JSON object, no markdown, no explanation outside the JSON
-
-Example response:
-{{"candidates": ["[data-testid=\\"submit-btn\\"]", "button:has-text(\\"Submit\\")", "[aria-label=\\"Submit form\\"]"], "explanation": "The button's class changed but data-testid is still present in the DOM."}}"""
+Context:
+{context_json}
+"""
 
     try:
-        messages = [{"role": "user", "content": prompt}]
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "Return the JSON object now."},
+        ]
         response = await llm_provider.chat(messages, max_tokens=8192)
         response_text = response.content or ""
         logger.debug("llm_repair_raw_response length=%d", len(response_text))
@@ -467,6 +746,9 @@ Example response:
         if "locator" in result and "candidates" not in result:
             loc = result.get("locator")
             result["candidates"] = [loc] if loc else []
+        if "domStatus" not in result:
+            result["domStatus"] = (dom_diagnosis or {}).get("status", "inconclusive")
+        result["_raw_response_preview"] = response_text[:2000]
         return result
     except Exception as exc:
         logger.error("llm_repair_error error=%s", str(exc))

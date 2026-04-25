@@ -243,6 +243,10 @@ class _PanelState:
         self._failing_step_id: str | None = None
         self._failing_step_override: Step | None = None
         self._original_steps: list[Step] = []  # Snapshot taken before first version save
+        self._repair_history_by_step: dict[str, list[dict[str, Any]]] = {}
+        self._llm_verified: bool | None = None
+        self._llm_verify_message: str = ""
+        self._llm_verify_task: asyncio.Task[None] | None = None
 
         # Auto-recording state
         self._recording_active = False
@@ -358,6 +362,8 @@ class _PanelState:
         action = payload.get("action", "")
         locator = payload.get("locator")
         params = payload.get("params") or {}
+        repair_context = payload.get("repairContext") or {}
+        repair_step_id = repair_context.get("stepId")
 
         start_ms = int(time.time() * 1000)
         try:
@@ -367,9 +373,30 @@ class _PanelState:
             finally:
                 await self._resume_auto_capture()
             duration_ms = int(time.time() * 1000) - start_ms
+            if repair_step_id:
+                self._append_repair_history(
+                    repair_step_id,
+                    {
+                        "kind": "post_apply_test",
+                        "locator": locator or "",
+                        "passed": True,
+                        "durationMs": duration_ms,
+                    },
+                )
             await self.bridge.broadcast_validate_result(passed=True, duration_ms=duration_ms)
         except Exception as exc:
             duration_ms = int(time.time() * 1000) - start_ms
+            if repair_step_id:
+                self._append_repair_history(
+                    repair_step_id,
+                    {
+                        "kind": "post_apply_test",
+                        "locator": locator or "",
+                        "passed": False,
+                        "error": _friendly_error(str(exc)),
+                        "durationMs": duration_ms,
+                    },
+                )
             await self.bridge.broadcast_validate_result(
                 passed=False, error=_friendly_error(str(exc)), duration_ms=duration_ms
             )
@@ -491,25 +518,49 @@ class _PanelState:
     async def handle_resume(self, msg: dict[str, Any]) -> None:
         payload = msg.get("payload", {})
         override = payload.get("overrideStep")
+        applied_step_id: str | None = None
+        applied_locator: str | None = None
+        applied_params: dict[str, Any] | None = None
 
-        if override and self._failing_step_id:
+        if override:
             # Apply the override to the step graph
-            override_step_id = override.get("stepId") or self._failing_step_id
+            override_step_id = (
+                override.get("stepId")
+                or self._failing_step_id
+                or self._paused_step_id
+            )
             new_locator = override.get("locator")
             new_params = override.get("params")
-            for s in self.step_graph.steps:
-                if s.step_id == override_step_id:
-                    if new_locator:
-                        s.metadata["locator"] = new_locator
-                        # Update the LocatorBundle primary selector
-                        if s.target:
-                            bundle = s.target.model_copy(update={"primary_selector": new_locator})
-                            object.__setattr__(s, "target", bundle)
-                    if new_params:
-                        s.metadata["params"] = new_params
-                    break
+            if override_step_id:
+                for s in self.step_graph.steps:
+                    if s.step_id == override_step_id:
+                        if new_locator:
+                            s.metadata["locator"] = new_locator
+                            # Update the LocatorBundle primary selector
+                            if s.target:
+                                bundle = s.target.model_copy(update={"primary_selector": new_locator})
+                                object.__setattr__(s, "target", bundle)
+                        if new_params:
+                            s.metadata["params"] = new_params
+                        applied_step_id = override_step_id
+                        applied_locator = new_locator
+                        applied_params = new_params if isinstance(new_params, dict) else None
+                        logger.info(
+                            "resume_override_applied step_id=%s locator=%s has_params=%s",
+                            applied_step_id,
+                            bool(applied_locator),
+                            bool(applied_params),
+                        )
+                        break
 
-        resume_from = self._failing_step_id or self._paused_step_id
+        if applied_step_id:
+            await self.bridge.broadcast_repair_applied(
+                step_id=applied_step_id,
+                locator=applied_locator,
+                params=applied_params,
+            )
+
+        resume_from = self._failing_step_id or self._paused_step_id or applied_step_id
         self._pause_requested = False
         self._paused_step_id = None
         self._failing_step_id = None
@@ -524,67 +575,129 @@ class _PanelState:
     # ── Force-fix ─────────────────────────────────────────────────────────
 
     async def handle_force_fix(self, msg: dict[str, Any]) -> None:
-        payload = msg.get("payload", {})
-        step_id = payload.get("stepId") or self._failing_step_id
+        try:
+            payload = msg.get("payload", {})
+            step_id = payload.get("stepId") or self._failing_step_id
+            if not step_id:
+                await self.bridge.broadcast_force_fix_progress(
+                    stage=4,
+                    status="fail",
+                    repaired=False,
+                    explanation="Auto-fix could not start because no failing step is selected.",
+                    meta={"failureCode": "no_failing_step"},
+                )
+                return
+
+            step = next((s for s in self.step_graph.steps if s.step_id == step_id), None)
+            if not step:
+                await self.bridge.broadcast_force_fix_progress(
+                    stage=4,
+                    status="fail",
+                    repaired=False,
+                    explanation=f"Auto-fix could not start because step {step_id} was not found.",
+                    meta={"failureCode": "step_not_found", "stepId": step_id},
+                )
+                return
+
+            from agent.healing.force_fix import run_force_fix_cascade
+
+            logger.info("force_fix_requested", step_id=step_id, has_override=bool(payload.get("primarySelector")))
+            primary = payload.get("primarySelector") or (step.target.primary_selector if step.target else "")
+            fallbacks = step.target.fallback_selectors if step.target else []
+            descriptor = step.metadata.get("descriptor") or {}
+            params = payload.get("params") or step.metadata.get("params") or {}
+            user_hint = (payload.get("userHint") or "").strip() or None
+            history_hint = self._build_repair_history_hint(step_id)
+            if history_hint:
+                user_hint = f"{(user_hint or '').strip()}\n\n{history_hint}".strip()
+
+            async def on_progress(
+                stage: int,
+                status: str,
+                repaired: bool,
+                locator: str | None,
+                explanation: str | None,
+                meta: dict[str, Any] | None,
+            ) -> None:
+                await self.bridge.broadcast_force_fix_progress(
+                    stage=stage,
+                    status=status,
+                    repaired=repaired,
+                    locator=locator,
+                    explanation=explanation,
+                    meta=meta,
+                )
+
+            result = await run_force_fix_cascade(
+                self.page,
+                step_id=step_id,
+                action=step.action,
+                primary_selector=primary,
+                fallback_selectors=fallbacks,
+                target_descriptor=descriptor,
+                params=params,
+                llm_provider=self.llm_provider if self.llm_enabled else None,
+                on_progress=on_progress,
+                user_hint=user_hint,
+            )
+
+            if result.repaired:
+                self._failing_step_id = step_id  # Keep for resume
+            self._append_repair_history(
+                step_id,
+                {
+                    "kind": "autofix_attempt",
+                    "stage": result.stage,
+                    "repaired": result.repaired,
+                    "locator": result.locator or "",
+                    "explanation": result.explanation or "",
+                    "candidatesTried": result.candidates_tried[-8:],
+                },
+            )
+            logger.info("force_fix_done", repaired=result.repaired, stage=result.stage)
+        except Exception as exc:
+            logger.error("force_fix_unhandled_error error=%s", str(exc))
+            await self.bridge.broadcast_force_fix_progress(
+                stage=4,
+                status="fail",
+                repaired=False,
+                explanation=f"Auto-fix internal error: {str(exc)[:220]}",
+                meta={"failureCode": "internal_error"},
+            )
+
+    def _append_repair_history(self, step_id: str, entry: dict[str, Any]) -> None:
         if not step_id:
-            await self.bridge.broadcast_force_fix_progress(
-                stage=4,
-                status="fail",
-                repaired=False,
-                explanation="Auto-fix could not start because no failing step is selected.",
-            )
             return
+        bucket = self._repair_history_by_step.setdefault(step_id, [])
+        bucket.append(entry)
+        # Keep recent entries only to limit hint/token growth.
+        if len(bucket) > 12:
+            del bucket[:-12]
 
-        step = next((s for s in self.step_graph.steps if s.step_id == step_id), None)
-        if not step:
-            await self.bridge.broadcast_force_fix_progress(
-                stage=4,
-                status="fail",
-                repaired=False,
-                explanation=f"Auto-fix could not start because step {step_id} was not found.",
+    def _build_repair_history_hint(self, step_id: str) -> str:
+        entries = self._repair_history_by_step.get(step_id) or []
+        if not entries:
+            return ""
+        lines: list[str] = ["## Previous repair attempts (most recent first)"]
+        for entry in reversed(entries[-5:]):
+            if entry.get("kind") == "post_apply_test":
+                locator = str(entry.get("locator") or "")[:140]
+                if entry.get("passed"):
+                    lines.append(f"- Post-apply test passed for locator: {locator}")
+                else:
+                    err = str(entry.get("error") or "validation failed")[:160]
+                    lines.append(f"- Post-apply test failed for locator: {locator} · error: {err}")
+                continue
+            stage = entry.get("stage")
+            repaired = bool(entry.get("repaired"))
+            locator = str(entry.get("locator") or "")[:140]
+            expl = str(entry.get("explanation") or "")[:180]
+            lines.append(
+                f"- Auto-fix stage {stage} {'succeeded' if repaired else 'failed'}"
+                + (f" · locator: {locator}" if locator else "")
+                + (f" · note: {expl}" if expl else "")
             )
-            return
-
-        from agent.healing.force_fix import run_force_fix_cascade
-
-        logger.info("force_fix_requested", step_id=step_id, has_override=bool(payload.get("primarySelector")))
-        primary = payload.get("primarySelector") or (step.target.primary_selector if step.target else "")
-        fallbacks = step.target.fallback_selectors if step.target else []
-        descriptor = step.metadata.get("descriptor") or {}
-        params = payload.get("params") or step.metadata.get("params") or {}
-        user_hint = (payload.get("userHint") or "").strip() or None
-
-        async def on_progress(
-            stage: int,
-            status: str,
-            repaired: bool,
-            locator: str | None,
-            explanation: str | None,
-        ) -> None:
-            await self.bridge.broadcast_force_fix_progress(
-                stage=stage,
-                status=status,
-                repaired=repaired,
-                locator=locator,
-                explanation=explanation,
-            )
-
-        result = await run_force_fix_cascade(
-            self.page,
-            step_id=step_id,
-            action=step.action,
-            primary_selector=primary,
-            fallback_selectors=fallbacks,
-            target_descriptor=descriptor,
-            params=params,
-            llm_provider=self.llm_provider if self.llm_enabled else None,
-            on_progress=on_progress,
-            user_hint=user_hint,
-        )
-
-        if result.repaired:
-            self._failing_step_id = step_id  # Keep for resume
-        logger.info("force_fix_done", repaired=result.repaired, stage=result.stage)
+        return "\n".join(lines)
 
     async def handle_accept_llm_repair(self, msg: dict[str, Any]) -> None:
         payload = msg.get("payload", {})
@@ -675,6 +788,8 @@ class _PanelState:
         try:
             from agent.healing.force_fix import verify_llm_connection
             verified, verify_msg = await verify_llm_connection(self.llm_provider)
+            self._llm_verified = verified
+            self._llm_verify_message = verify_msg
             logger.info("llm_verify", verified=verified, message=verify_msg)
             await self.bridge.send({
                 "type": "llm_status",
@@ -686,6 +801,15 @@ class _PanelState:
             })
         except Exception as exc:
             logger.debug("llm_verify_error error=%s", str(exc))
+        finally:
+            self._llm_verify_task = None
+
+    def _schedule_llm_verify(self) -> None:
+        if self.llm_provider is None:
+            return
+        if self._llm_verify_task and not self._llm_verify_task.done():
+            return
+        self._llm_verify_task = asyncio.create_task(self._verify_and_broadcast_llm())
 
     # ── Auto-recording ────────────────────────────────────────────────────────
 
@@ -879,6 +1003,8 @@ class _PanelState:
 
         self.llm_provider = new_provider
         self.llm_enabled = new_provider is not None
+        self._llm_verified = None
+        self._llm_verify_message = "Checking connection…" if new_provider else "No provider configured."
         logger.info("llm_config_updated", provider=provider_name, has_provider=new_provider is not None)
 
         # Persist to ~/.agent/llm_config.json
@@ -897,20 +1023,12 @@ class _PanelState:
             },
         })
 
-        # Verify the connection and send a follow-up status update
+        # Verify once after config change and cache the result for reconnects.
         if new_provider is not None:
-            from agent.healing.force_fix import verify_llm_connection
-            verified, verify_msg = await verify_llm_connection(new_provider)
-            logger.info("llm_verify", verified=verified, message=verify_msg)
-            await self.bridge.send({
-                "type": "llm_status",
-                "payload": {
-                    "available": True,
-                    "verified": verified,
-                    "verify_message": verify_msg,
-                },
-            })
+            await self._verify_and_broadcast_llm()
         else:
+            self._llm_verified = False
+            self._llm_verify_message = "No provider configured."
             await self.bridge.send({
                 "type": "llm_status",
                 "payload": {"available": False, "verified": False, "verify_message": "No provider configured."},
@@ -952,17 +1070,33 @@ class _PanelState:
             except Exception:
                 pass
 
-        # Send initial LLM status (unverified) then verify in background
-        await self.bridge.send({
-            "type": "llm_status",
-            "payload": {
-                "available": self.llm_provider is not None,
-                "verified": None,
-                "verify_message": "Checking connection…" if self.llm_provider else "",
-            },
-        })
-        if self.llm_provider is not None:
-            asyncio.create_task(self._verify_and_broadcast_llm())
+        # Send LLM status; only verify when we do not already have a cached result.
+        if self.llm_provider is None:
+            self._llm_verified = False
+            self._llm_verify_message = "No provider configured."
+            await self.bridge.send({
+                "type": "llm_status",
+                "payload": {"available": False, "verified": False, "verify_message": "No provider configured."},
+            })
+        elif self._llm_verified is None:
+            await self.bridge.send({
+                "type": "llm_status",
+                "payload": {
+                    "available": True,
+                    "verified": None,
+                    "verify_message": "Checking connection…",
+                },
+            })
+            self._schedule_llm_verify()
+        else:
+            await self.bridge.send({
+                "type": "llm_status",
+                "payload": {
+                    "available": True,
+                    "verified": self._llm_verified,
+                    "verify_message": self._llm_verify_message,
+                },
+            })
 
         if self._failing_step_id:
             await self.bridge.broadcast_pause(self._failing_step_id, "Previously paused — click Resume or Force-fix")
