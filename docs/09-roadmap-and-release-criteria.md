@@ -1,49 +1,74 @@
 # Roadmap and Release Criteria
 
-## Phase 1 (MVP)
+## Phase 1 (current — picker-panel slice)
 
-- Unify Manual and LLM-Orchestrated execution under one Step Graph model.
-- Deliver Hybrid mode with runtime LLM ON/OFF switch.
-- Implement checkpoint/event-log pause/fix/resume.
-- Implement three-layer memory model (raw evidence, compiled memory, schema/policy).
-- Implement cache/invalidation engine with `reuse` / `partial_refresh` / `full_refresh`.
-- Cover required Playwright behaviors: waits/assertions/iframe/modal/storage-state.
-- Implement contradiction detection and auditable conflict-resolution policy for locator/state drift.
-- Export portable manifests for downstream codegen pipelines.
+**Goal**: one user can launch the panel, record ≥3 steps including ≥1 assertion, replay, hit a failure, fix/force-fix, resume from the failing step, and save a named version. All from the panel, never restarting from scratch.
+
+**Deliverables**:
+- `agent panel` CLI command
+- Panel overlay (Shadow DOM) with full Manual mode action palette
+- Panel bridge (WebSocket / expose_binding)
+- Recorder extension for hover-outline + pick-confirm
+- Force-fix cascade (stages 1–3 deterministic + stage 4 LLM when configured)
+- Recording versions (copy-on-write, SQLite-backed)
+- Runner extended with pause-to-bridge on failure + resume_with_override
+- Updated docs: 01, 02, 03, 05, 09, 10 (this pass)
+
+**Out of scope for Phase 1** (explicitly deferred — code preserved, not deleted):
+- Contradiction resolver enforcement
+- Export confidence gating thresholds
+- Policy/approval classifier routing
+- Full LLM orchestrator plan-act-observe loop
+- Cache/invalidation wired into replay
+- Benchmark/experiment harness
+- Human session testing framework integration
+
+**Go criteria**:
+- All 10 steps of the acceptance test in `docs/10-panel-ux.md` pass manually.
+- Panel works with no LLM provider configured (Manual mode fully functional).
+- Force-fix LLM stage runs and returns useful output with a provider configured.
 
 ## Phase 2
 
+- Wire contradiction resolver into the runner (stale_locator / content_drift / structure_drift detection + policy).
+- Export confidence gating thresholds applied to portable manifest export.
+- Cache/invalidation engine wired into replay (reuse / partial_refresh / full_refresh decisions).
 - Adaptive recovery policies and dynamic confidence thresholds.
-- Repair memory quality controls and rollback handling.
-- Stronger approval rules and policy automation.
-- Cost/reliability dashboards for team-level operations.
+- Repair memory promotion (candidate → trusted → degraded) enforced.
+- Cost/reliability summary panel in the UI.
 
 ## Phase 3
 
-- Multi-flow orchestration and larger workflow packs.
-- Extended framework adapters and enterprise integration features.
-- Governance features (SSO/RBAC/compliance workflows).
+- Full LLM orchestrator plan-act-observe loop (intent compression from a full English description, not just single-goal compression).
+- Policy/approval classifier decision logic.
+- Benchmark/experiment harness.
+- Multi-flow orchestration.
+- Enterprise integration features (SSO/RBAC/compliance workflows).
+- Extended framework adapters.
 
-## Go / No-Go Criteria
+## Go / No-Go Criteria (Phase 1)
 
 Go if:
-- KPI targets are met across realistic benchmark suites.
-- Hybrid mode materially improves operator throughput.
-- Restart-from-zero behavior is rare and bounded.
-- Cache hit and refresh-ratio thresholds in benchmark gates remain stable.
+- Pause/fix/resume loop works reliably on real apps.
+- Force-fix cascade resolves >60% of single-locator failures without LLM in a sample test.
+- Panel is usable without reading any docs (self-describing action palette).
+- Recording version save/load round-trip is lossless.
 
-No-go or pivot if:
-- Recovery still requires frequent full reruns.
-- Deterministic + assisted strategy fails on practical UI entropy.
-- Portability value is weak for target teams.
+No-go / pivot if:
+- Injected panel causes CSS collision or JS conflicts on real target pages that can't be mitigated with Shadow DOM scoping.
+- Pause/resume checkpoint semantics break across browser navigation events.
+- Force-fix LLM stage produces locators that silently match the wrong element.
 
 ## Risks and Mitigations
 
-- **Risk**: mode complexity increases operator confusion.  
-  **Mitigation**: explicit mode indicators and action-scoped assist prompts.
-- **Risk**: learned repairs regress future runs.  
-  **Mitigation**: scoped memory keys + validation before promotion.
-- **Risk**: stale cached context causes incorrect actions.  
-  **Mitigation**: strict invalidation triggers + targeted partial refresh before fallback full refresh.
-- **Risk**: cost rises in high-assist sessions.  
-  **Mitigation**: visibility and budgets on LLM assist usage.
+- **Risk**: Shadow DOM panel interferes with the page's own event handling.
+  **Mitigation**: use `pointer-events: none` on the overlay wrapper except on panel UI elements; contain all event listeners inside Shadow DOM.
+
+- **Risk**: LLM force-fix returns a selector that matches a different element (false positive repair).
+  **Mitigation**: every LLM-returned selector is validated live before being accepted; the panel shows what matched so the user can confirm.
+
+- **Risk**: Pause/resume breaks after page navigation between steps.
+  **Mitigation**: checkpoint includes `browser_session_id` + `tab_id`; runner re-attaches to the existing tab after navigation.
+
+- **Risk**: Learned repairs regress future runs (v2 concern, but intervening events accumulate in v1).
+  **Mitigation**: intervention events are stored with full provenance; promotion logic is gated in v2; no auto-promotion in v1.

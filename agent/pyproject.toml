@@ -26,6 +26,7 @@ dependencies = [
 
 [project.scripts]
 agent = "agent.cli.__main__:main"
+pw-agent = "agent.cli.__main__:main"
 
 [dependency-groups]
 dev = [

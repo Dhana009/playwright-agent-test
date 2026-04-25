@@ -6,7 +6,6 @@ import os
 import select
 import sys
 from pathlib import Path
-from typing import Literal
 
 import typer
 
@@ -16,7 +15,7 @@ from agent.recorder.recorder import RecorderArtifact, StepGraphRecorder
 app = typer.Typer(help="Record browser actions into a Step Graph.")
 LOGGER = get_logger(__name__)
 
-OperatorMode = Literal["auto", "assert_visible", "assert_text"]
+OperatorMode = str
 
 
 def _supports_raw_hotkey() -> bool:
@@ -113,8 +112,6 @@ async def _record_once(
         if started:
             return await recorder.stop()
 
-    raise RuntimeError("Recorder did not start successfully.")
-
 
 @app.command("record")
 def record(
@@ -130,11 +127,11 @@ def record(
         readable=True,
         help="Optional Playwright storage state JSON file for authenticated recording.",
     ),
-    mode: OperatorMode = typer.Option(
+    mode: str = typer.Option(
         "auto",
         "--mode",
         case_sensitive=False,
-        help="Initial recorder intent mode.",
+        help="Initial recorder intent mode (auto, assert_visible, assert_text).",
     ),
     stop_key: str = typer.Option(
         "q",
@@ -166,6 +163,13 @@ def record(
     """
     Record user interactions from a live browser and persist a replayable Step Graph.
     """
+    normalized_mode = mode.lower().replace("-", "_")
+    if normalized_mode not in ("auto", "assert_visible", "assert_text"):
+        raise typer.BadParameter(
+            f"Invalid --mode {mode!r}; expected auto, assert_visible, or assert_text.",
+        )
+    mode_value: OperatorMode = normalized_mode  # type: ignore[assignment]
+
     storage_state_value = str(storage_state) if storage_state is not None else None
     stop_key_value = stop_key[0]
 
@@ -187,7 +191,7 @@ def record(
                 run_id=run_id,
                 headless=headless,
                 storage_state=storage_state_value,
-                mode=mode,
+                mode=mode_value,
                 stop_key=stop_key_value,
                 browser_ui=browser_ui,
                 record_armed_start=record_armed_start,

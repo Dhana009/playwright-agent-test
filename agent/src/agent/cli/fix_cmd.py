@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import typer
 
@@ -58,7 +58,7 @@ async def _apply_fix_and_resume(
     *,
     run_id: str,
     step_id: str,
-    fix_type: Literal["force-fix", "manual-fix"],
+    fix_type: str,
     selector: str | None,
     sqlite_path: str | Path | None = None,
     runs_root: str | Path | None = None,
@@ -122,16 +122,19 @@ async def _apply_fix_and_resume(
 def fix(
     run_id: str = typer.Argument(...),
     step_id: str | None = typer.Option(None, "--step-id", help="Step id to fix (defaults to latest failed)."),
-    fix_type: Literal["force-fix", "manual-fix"] = typer.Option(
+    fix_type: str = typer.Option(
         "manual-fix",
         "--type",
-        help="Which fix flow to apply.",
+        help="Which fix flow to apply (manual-fix or force-fix).",
     ),
     selector: str | None = typer.Option(None, "--selector", help="Selector for manual-fix."),
 ) -> None:
     """
     Apply a manual operator fix and record `intervention_recorded`.
     """
+    if fix_type not in ("force-fix", "manual-fix"):
+        raise typer.BadParameter(f"Invalid --type {fix_type!r}; expected manual-fix or force-fix.")
+
     # typer commands are sync; use asyncio via a minimal loop runner
     async def _impl() -> None:
         if step_id is None:

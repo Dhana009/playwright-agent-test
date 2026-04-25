@@ -1,4 +1,7 @@
-from agent.llm.anthropic import AnthropicProvider
+try:
+    from agent.llm.anthropic import AnthropicProvider
+except ImportError:
+    AnthropicProvider = None  # type: ignore[assignment,misc]
 from agent.llm.context import (
     ContextBuildResult,
     StagedContextBuilder,

@@ -457,6 +457,9 @@ _CAPTURE_QUEUE_INIT_SCRIPT = """
     },
     true
   );
+
+  // Expose collectTarget globally so the panel pick flow can use it
+  window.__agentCollectTarget = collectTarget;
 })();
 """.strip()
 

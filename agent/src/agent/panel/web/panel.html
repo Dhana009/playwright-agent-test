@@ -1,0 +1,2427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Playwright Agent Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Design tokens (from design file) ── */
+:root {
+  --bg-0: #0b0d10;
+  --bg-1: #101317;
+  --bg-2: #161a1f;
+  --bg-3: #1d2127;
+  --bg-hover: #22272e;
+  --bg-sunken: #0a0c0f;
+  --border-1: #22272e;
+  --border-2: #2c333b;
+  --border-3: #3a434d;
+  --fg-0: #e6edf3;
+  --fg-1: #c9d1d9;
+  --fg-2: #8b949e;
+  --fg-3: #6e7681;
+  --fg-4: #484f58;
+  --accent: #2dd4bf;
+  --accent-dim: #14b8a6;
+  --accent-ghost: rgba(45,212,191,0.12);
+  --accent-line: rgba(45,212,191,0.35);
+  --success: #3fb950;
+  --success-ghost: rgba(63,185,80,0.1);
+  --info: #58a6ff;
+  --info-ghost: rgba(88,166,255,0.12);
+  --warn: #d29922;
+  --warn-ghost: rgba(210,153,34,0.12);
+  --danger: #f85149;
+  --danger-ghost: rgba(248,81,73,0.12);
+  --purple: #a371f7;
+  --purple-ghost: rgba(163,113,247,0.15);
+  --gray-ghost: rgba(139,148,158,0.1);
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Panel shell ── */
+#panel-root {
+  position: fixed;
+  inset: 0;
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-0);
+  border-right: 1px solid var(--border-1);
+  overflow: hidden;
+}
+#panel-root.collapsed { width: 18px; }
+
+/* ── Resize handle ── */
+#resize-handle {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, transparent, var(--accent-line) 30%, var(--accent-line) 70%, transparent);
+  cursor: ew-resize;
+  opacity: 0.6;
+  z-index: 10;
+}
+#resize-handle:hover { opacity: 1; background: linear-gradient(180deg, transparent, var(--accent), transparent); }
+
+/* ── Collapsed tab ── */
+#collapsed-tab {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 8px;
+  height: 100%;
+  cursor: pointer;
+  background: var(--bg-1);
+  border-right: 1px solid var(--border-2);
+  width: 18px;
+}
+#collapsed-tab:hover { background: var(--bg-2); }
+#panel-root.collapsed #collapsed-tab { display: flex; }
+#panel-root.collapsed #panel-content { display: none; }
+.collapsed-rec {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 6px var(--danger);
+  flex-shrink: 0;
+}
+.collapsed-rec.idle { background: var(--fg-4); box-shadow: none; }
+.collapsed-ico {
+  color: var(--fg-3);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.collapsed-count {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--accent);
+  letter-spacing: 1px;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Main content ── */
+#panel-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Scrollable body (steps area + editors) ── */
+#panel-scroll-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+#panel-scroll-body::-webkit-scrollbar { width: 6px; }
+#panel-scroll-body::-webkit-scrollbar-track { background: transparent; }
+#panel-scroll-body::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+
+/* ── Header ── */
+.pw-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+  border-bottom: 1px solid var(--border-1);
+  flex-shrink: 0;
+}
+.pw-logo {
+  width: 16px; height: 16px; flex-shrink: 0;
+  color: var(--accent);
+}
+.pw-title {
+  font-weight: 600; font-size: 12px; letter-spacing: -0.1px;
+  color: var(--fg-0); flex: 1;
+}
+.pw-version {
+  font-family: var(--font-mono); font-size: 10px; color: var(--fg-3);
+  padding: 1px 5px; border: 1px solid var(--border-2);
+  border-radius: 3px; background: var(--bg-sunken);
+}
+.pw-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 20px; padding: 0 7px; border-radius: 10px;
+  font-size: 10px; font-weight: 500; font-family: var(--font-mono);
+  border: 1px solid var(--border-2); color: var(--fg-1);
+  background: var(--bg-sunken); cursor: pointer; user-select: none;
+  transition: all 120ms;
+}
+.pw-pill:hover { border-color: var(--border-3); color: var(--fg-0); }
+.pw-pill.on { background: var(--accent-ghost); border-color: var(--accent-line); color: var(--accent); }
+.pw-pill.off { background: var(--gray-ghost); color: var(--fg-3); }
+.pw-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pw-pill.on .dot { box-shadow: 0 0 6px var(--accent); }
+.pw-iconbtn {
+  width: 22px; height: 22px; display: inline-flex; align-items: center;
+  justify-content: center; border: none; background: transparent;
+  color: var(--fg-2); border-radius: 4px; cursor: pointer; transition: all 120ms;
+}
+.pw-iconbtn:hover { background: var(--bg-hover); color: var(--fg-0); }
+
+/* ── URL bar ── */
+.pw-urlbar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; background: var(--bg-1);
+  border-bottom: 1px solid var(--border-1);
+  font-family: var(--font-mono); font-size: 10.5px; flex-shrink: 0;
+}
+.rec-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--danger); box-shadow: 0 0 0 2px rgba(248,81,73,0.15);
+  animation: rec-pulse 1.6s infinite; flex-shrink: 0;
+}
+.rec-dot.idle { background: var(--fg-4); box-shadow: none; animation: none; }
+@keyframes rec-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.url-scheme { color: var(--fg-3); }
+.url-host { color: var(--fg-0); }
+.url-path { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+
+/* ── Workflow banner ── */
+.pw-workflow {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  background: var(--bg-1); border-bottom: 1px solid var(--border-1);
+  flex-shrink: 0;
+}
+.pw-wf-step {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px; font-size: 11px; color: var(--fg-3);
+  border-right: 1px solid var(--border-1); cursor: pointer;
+  transition: background 120ms;
+}
+.pw-wf-step:last-child { border-right: none; }
+.pw-wf-step:hover { background: var(--bg-2); }
+.pw-wf-step .wf-num {
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--bg-3); border: 1px solid var(--border-2);
+  color: var(--fg-3); display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; flex-shrink: 0;
+}
+.pw-wf-step .wf-lbl { font-weight: 500; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-wf-step.active { color: var(--fg-0); background: var(--accent-ghost); }
+.pw-wf-step.active .wf-num { background: var(--accent); border-color: var(--accent); color: #0b0d10; }
+.pw-wf-step.done { color: var(--fg-2); }
+.pw-wf-step.done .wf-num { background: var(--success-ghost); border-color: rgba(63,185,80,0.4); color: var(--success); font-size: 11px; }
+
+/* ── LLM banner ── */
+.pw-llm-banner {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 12px; border-bottom: 1px solid var(--border-1);
+  font-size: 11px; background: var(--bg-1); flex-shrink: 0;
+}
+.pw-llm-banner .llm-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.pw-llm-banner.ready { background: rgba(63,185,80,0.08); }
+.pw-llm-banner.ready .llm-dot { background: var(--success); box-shadow: 0 0 0 3px rgba(63,185,80,0.2); }
+.pw-llm-banner.active { background: var(--accent-ghost); }
+.pw-llm-banner.active .llm-dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-ghost); animation: llm-pulse 1.2s infinite; }
+@keyframes llm-pulse { 0%,100%{box-shadow:0 0 0 3px var(--accent-ghost)} 50%{box-shadow:0 0 0 6px rgba(45,212,191,0.05)} }
+.pw-llm-banner.off { background: rgba(248,81,73,0.08); }
+.pw-llm-banner.off .llm-dot { background: var(--danger); }
+.pw-llm-banner.warn { background: var(--warn-ghost); }
+.pw-llm-banner.warn .llm-dot { background: var(--warn); }
+.llm-banner-body { flex: 1; line-height: 1.35; min-width: 0; }
+.llm-banner-title { font-weight: 600; color: var(--fg-0); font-size: 11px; }
+.pw-llm-banner.ready .llm-banner-title { color: var(--success); }
+.pw-llm-banner.active .llm-banner-title { color: var(--accent); }
+.pw-llm-banner.off .llm-banner-title { color: var(--danger); }
+.pw-llm-banner.warn .llm-banner-title { color: var(--warn); }
+.llm-banner-sub { font-size: 10px; color: var(--fg-3); }
+.llm-banner-action {
+  color: var(--accent); font-size: 10.5px; font-weight: 500;
+  cursor: pointer; flex-shrink: 0;
+}
+.llm-banner-action:hover { text-decoration: underline; }
+
+/* ── Record mode toggle ── */
+.pw-mode-toggle {
+  display: flex; gap: 4px; padding: 8px 12px 0;
+  background: var(--bg-1); flex-shrink: 0;
+}
+.pw-mode-btn {
+  flex: 1; height: 26px; border: 1px solid var(--border-2);
+  border-radius: 4px; background: var(--bg-2); color: var(--fg-3);
+  font-size: 10.5px; font-weight: 500; cursor: pointer;
+  font-family: var(--font-sans); transition: all 120ms;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.pw-mode-btn:hover { border-color: var(--border-3); color: var(--fg-1); }
+.pw-mode-btn.active { background: var(--accent-ghost); border-color: var(--accent-line); color: var(--accent); }
+
+/* ── Record zone ── */
+.pw-record-zone {
+  padding: 8px 12px 11px; border-bottom: 1px solid var(--border-1);
+  background: var(--bg-1); flex-shrink: 0;
+}
+.pw-record-btn {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 0 14px; height: 44px; border-radius: 6px;
+  border: 1px solid rgba(248,81,73,0.4);
+  background: linear-gradient(180deg, rgba(248,81,73,0.18), rgba(248,81,73,0.10));
+  color: var(--danger); font-size: 13px; font-weight: 600;
+  font-family: var(--font-sans); cursor: pointer; transition: all 140ms;
+}
+.pw-record-btn:hover { background: linear-gradient(180deg, rgba(248,81,73,0.28), rgba(248,81,73,0.16)); border-color: var(--danger); }
+.pw-record-btn .rec-ico {
+  width: 16px; height: 16px; background: var(--danger); border-radius: 50%; flex-shrink: 0;
+}
+.pw-record-btn .rec-grow { flex: 1; text-align: left; }
+.pw-record-btn .rec-kbd {
+  font-family: var(--font-mono); font-size: 10px; background: rgba(0,0,0,0.3);
+  padding: 2px 6px; border-radius: 3px; color: inherit; opacity: 0.8;
+}
+.pw-record-btn.live {
+  background: var(--danger); color: white; border-color: var(--danger);
+  animation: live-pulse 1.4s infinite;
+}
+@keyframes live-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(248,81,73,0.5)} 50%{box-shadow:0 0 0 6px rgba(248,81,73,0)} }
+.pw-record-btn.live .rec-ico { background: white; animation: rec-blink 1s infinite; }
+@keyframes rec-blink { 0%,49%{opacity:1} 50%,100%{opacity:0.3} }
+.pw-record-meta {
+  margin-top: 7px; display: flex; gap: 8px; font-family: var(--font-mono);
+  font-size: 10px; color: var(--fg-3); align-items: center;
+}
+.live-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--danger); font-weight: 600;
+}
+.live-tag::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--danger); animation: rec-pulse 1.4s infinite;
+}
+.rec-stat { color: var(--fg-2); }
+.rec-stat strong { color: var(--fg-0); font-variant-numeric: tabular-nums; }
+
+/* ── Manual mode collapsible ── */
+.pw-manual { border-bottom: 1px solid var(--border-1); flex-shrink: 0; }
+.pw-manual-head {
+  display: flex; align-items: center; gap: 7px; padding: 8px 12px;
+  cursor: pointer; user-select: none; background: var(--bg-1); transition: background 120ms;
+}
+.pw-manual-head:hover { background: var(--bg-2); }
+.pw-manual-chev { color: var(--fg-3); transition: transform 140ms; display: flex; align-items: center; }
+.pw-manual.open .pw-manual-chev { transform: rotate(90deg); }
+.pw-manual-lbl { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--fg-2); flex: 1; }
+.pw-manual-hint { font-size: 10px; color: var(--fg-4); font-family: var(--font-mono); }
+.pw-manual-body { display: none; border-top: 1px solid var(--border-1); }
+.pw-manual.open .pw-manual-body { display: block; }
+
+/* ── Section ── */
+.pw-section { border-bottom: 1px solid var(--border-1); padding: 10px 12px; }
+.pw-section-title {
+  display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.8px; color: var(--fg-3); margin-bottom: 8px;
+}
+.pw-section-title .sec-count { color: var(--fg-4); font-weight: 500; letter-spacing: 0; }
+.pw-section-title .sec-spacer { flex: 1; }
+.pw-section-title .sec-link { color: var(--accent); text-transform: none; letter-spacing: 0; font-weight: 500; cursor: pointer; }
+.pw-section-title .sec-link:hover { text-decoration: underline; }
+
+/* ── Help tooltip ── */
+.pw-help {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--bg-3);
+  color: var(--fg-3); display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; cursor: help; position: relative;
+  border: 1px solid var(--border-2); transition: all 120ms; flex-shrink: 0;
+}
+.pw-help:hover { background: var(--accent-ghost); color: var(--accent); border-color: var(--accent-line); }
+.pw-help-tip {
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  min-width: 200px; max-width: 240px; padding: 7px 10px;
+  background: #0a0c0f; border: 1px solid var(--border-3); border-radius: 4px;
+  color: var(--fg-1); font-size: 10.5px; font-weight: 400; text-transform: none;
+  letter-spacing: 0; line-height: 1.45; white-space: normal;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5); opacity: 0; pointer-events: none;
+  transition: opacity 120ms; z-index: 200;
+}
+.pw-help:hover .pw-help-tip { opacity: 1; }
+
+/* ── Pick button ── */
+.pw-pick-btn {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: var(--accent-ghost); border: 1px solid var(--accent-line);
+  border-radius: 5px; color: var(--accent); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 120ms;
+}
+.pw-pick-btn:hover { background: rgba(45,212,191,0.2); border-color: var(--accent); }
+.pw-pick-btn.active { background: var(--accent); color: #0b0d10; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ghost); }
+.pw-pick-btn .pick-kbd {
+  margin-left: auto; font-family: var(--font-mono); font-size: 10px;
+  padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,0.3); color: inherit; opacity: 0.7;
+}
+.pick-status {
+  margin-top: 7px; font-size: 10.5px; color: var(--fg-3);
+  font-family: var(--font-mono); word-break: break-all;
+}
+.pick-status.picking { color: var(--accent); }
+.pick-status.picked { color: var(--success); }
+
+/* ── Locator candidates ── */
+.pw-cand {
+  display: flex; align-items: center; gap: 8px; padding: 6px 9px;
+  background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 4px;
+  font-family: var(--font-mono); font-size: 10.5px; cursor: pointer; transition: all 120ms;
+  margin-bottom: 4px;
+}
+.pw-cand:last-child { margin-bottom: 0; }
+.pw-cand:hover { border-color: var(--border-3); background: var(--bg-3); }
+.pw-cand.selected { border-color: var(--accent); background: var(--accent-ghost); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.cand-strategy {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 46px; height: 17px; padding: 0 5px; border-radius: 3px;
+  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
+}
+.cand-strategy.testid { background: rgba(63,185,80,0.15); color: var(--success); }
+.cand-strategy.aria { background: rgba(88,166,255,0.15); color: var(--info); }
+.cand-strategy.role { background: rgba(88,166,255,0.15); color: var(--info); }
+.cand-strategy.text { background: rgba(163,113,247,0.2); color: var(--purple); }
+.cand-strategy.css { background: rgba(210,153,34,0.15); color: var(--warn); }
+.cand-strategy.xpath { background: rgba(248,81,73,0.15); color: var(--danger); }
+.cand-sel { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-1); }
+.pw-cand.selected .cand-sel { color: var(--fg-0); }
+.cand-conf { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.conf-bar { width: 28px; height: 4px; background: var(--bg-sunken); border-radius: 2px; overflow: hidden; }
+.conf-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+.conf-fill.mid { background: var(--warn); }
+.conf-fill.low { background: var(--danger); }
+.conf-num { font-size: 9.5px; color: var(--fg-3); min-width: 26px; text-align: right; }
+.use-locator-btn {
+  width: 100%; margin-top: 8px; padding: 6px 12px;
+  background: var(--accent); border: none; border-radius: 5px;
+  color: #0b0d10; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  transition: background 120ms;
+}
+.use-locator-btn:hover { background: var(--accent-dim); }
+
+/* ── Action config ── */
+.pw-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.pw-row:last-child { margin-bottom: 0; }
+.pw-select, .pw-input {
+  flex: 1; height: 28px; padding: 0 8px; background: var(--bg-2);
+  border: 1px solid var(--border-2); border-radius: 4px; color: var(--fg-0);
+  font-family: var(--font-mono); font-size: 11px; outline: none; transition: border-color 120ms;
+}
+.pw-select { padding-right: 22px; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 4l3 3 3-3' stroke='%238b949e' fill='none' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center;
+}
+.pw-select:focus, .pw-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ghost); }
+.pw-input::placeholder { color: var(--fg-4); }
+.pw-btn {
+  height: 28px; padding: 0 10px; background: var(--bg-3); border: 1px solid var(--border-2);
+  border-radius: 4px; color: var(--fg-0); font-size: 11px; font-weight: 500; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  transition: all 120ms; font-family: var(--font-sans);
+}
+.pw-btn:hover { background: var(--bg-hover); border-color: var(--border-3); }
+.pw-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.pw-btn.primary { background: var(--accent); color: #0b0d10; border-color: var(--accent); }
+.pw-btn.primary:hover { background: var(--accent-dim); border-color: var(--accent-dim); }
+.pw-btn.danger { color: var(--danger); border-color: rgba(248,81,73,0.3); }
+.pw-btn.danger:hover { background: var(--danger-ghost); }
+.pw-btn.warn { color: var(--warn); border-color: rgba(210,153,34,0.3); }
+.pw-btn.warn:hover { background: var(--warn-ghost); }
+
+/* ── Validate result ── */
+.pw-validate-result {
+  display: none; align-items: flex-start; gap: 8px; padding: 7px 10px;
+  border-radius: 4px; font-size: 11px; margin-top: 8px; line-height: 1.4;
+}
+.pw-validate-result.show { display: flex; }
+.pw-validate-result.pass { background: var(--success-ghost); border: 1px solid rgba(63,185,80,0.3); color: var(--success); }
+.pw-validate-result.fail { background: var(--danger-ghost); border: 1px solid rgba(248,81,73,0.3); color: var(--danger); }
+.vr-msg { flex: 1; }
+.vr-time { font-family: var(--font-mono); font-size: 10px; opacity: 0.7; flex-shrink: 0; }
+
+/* ── Live capture ticker ── */
+.pw-live-capture {
+  display: none; align-items: center; gap: 8px; padding: 7px 12px;
+  background: rgba(248,81,73,0.06); border-bottom: 1px solid rgba(248,81,73,0.2);
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-2); flex-shrink: 0;
+}
+.pw-live-capture.show { display: flex; }
+.live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); animation: rec-blink 1s infinite; flex-shrink: 0; }
+.live-txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-verb { color: var(--info); font-weight: 600; }
+.live-target { color: var(--fg-0); }
+
+/* ── Steps area ── */
+.pw-steps-toolbar {
+  display: flex; align-items: center; gap: 7px; padding: 7px 10px;
+  background: var(--bg-1); border-bottom: 1px solid var(--border-1); flex-shrink: 0;
+}
+.steps-toolbar-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--fg-2); }
+.steps-toolbar-count { font-family: var(--font-mono); font-size: 10px; color: var(--fg-4); }
+.steps-toolbar-grow { flex: 1; }
+
+/* ── Per-step run button ── */
+.step-run-btn {
+  width: 20px; height: 20px; border: none; background: transparent;
+  color: var(--fg-4); border-radius: 3px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 120ms;
+}
+.step-run-btn:hover { background: var(--accent-ghost); color: var(--accent); }
+.pw-step.running .step-run-btn, .pw-step.failed .step-run-btn { opacity: 1; }
+.step-inline-result {
+  display: none; font-family: var(--font-mono); font-size: 10px;
+  padding: 2px 5px; border-radius: 3px; margin-top: 3px;
+}
+.step-inline-result.pass { display: block; background: var(--success-ghost); color: var(--success); }
+.step-inline-result.fail { display: block; background: var(--danger-ghost); color: var(--danger); }
+
+.pw-saved-path {
+  display: none; align-items: center; gap: 6px; padding: 5px 12px;
+  background: rgba(63,185,80,0.08); border-bottom: 1px solid rgba(63,185,80,0.2);
+  font-family: var(--font-mono); font-size: 10px; color: var(--success); flex-shrink: 0;
+}
+.pw-saved-path.show { display: flex; }
+.saved-path-txt { color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.saved-path-copy { color: var(--accent); cursor: pointer; font-family: var(--font-sans); font-size: 10px; font-weight: 500; }
+
+/* ── Step list ── */
+.pw-steps {
+  padding: 4px 8px 6px;
+  background: var(--bg-sunken);
+  min-height: 80px;
+}
+.pw-steps .empty-state {
+  padding: 32px 16px; text-align: center; color: var(--fg-4);
+  font-size: 11px; line-height: 1.5;
+}
+.pw-steps .empty-state svg { width: 28px; height: 28px; margin: 0 auto 10px; display: block; opacity: 0.3; }
+
+/* Insert line */
+.pw-insert {
+  height: 4px; position: relative; display: flex; align-items: center;
+  justify-content: center; opacity: 0; transition: opacity 120ms, height 120ms; cursor: pointer;
+}
+.pw-step-wrap:hover .pw-insert { opacity: 1; height: 16px; }
+.pw-insert.always { opacity: 1; height: 16px; }
+.pw-insert::before {
+  content: ""; position: absolute; left: 8px; right: 8px; top: 50%;
+  border-top: 1px dashed var(--accent-line);
+}
+.pw-insert .ins-btn {
+  position: relative; z-index: 1; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--bg-0); border: 1px solid var(--accent); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; line-height: 1; font-family: var(--font-mono);
+}
+.pw-insert:hover .ins-btn { background: var(--accent); color: #0b0d10; }
+
+/* Step row */
+.pw-step {
+  display: flex; gap: 6px; padding: 7px 7px; background: var(--bg-1);
+  border: 1px solid var(--border-1); border-radius: 5px; margin: 2px 0;
+  position: relative; transition: background 120ms;
+}
+.pw-step:hover { background: var(--bg-2); }
+.pw-step.running { background: rgba(88,166,255,0.08); border-color: rgba(88,166,255,0.3); animation: running-glow 2s infinite; }
+@keyframes running-glow { 0%,100%{box-shadow:0 0 0 0 rgba(88,166,255,0)} 50%{box-shadow:0 0 0 2px rgba(88,166,255,0.15)} }
+.pw-step.paused { background: var(--warn-ghost); border-color: rgba(210,153,34,0.3); }
+.pw-step.failed { background: var(--danger-ghost); border-color: rgba(248,81,73,0.3); }
+.pw-step.completed { opacity: 0.75; }
+@keyframes step-appear { from{opacity:0;transform:translateX(-8px);background:var(--accent-ghost)} to{opacity:1;transform:translateX(0)} }
+.pw-step.new { animation: step-appear 0.4s ease-out; }
+
+.step-num {
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-4);
+  width: 18px; text-align: right; flex-shrink: 0; padding-top: 2px; user-select: none;
+}
+.pw-step.running .step-num { color: var(--info); }
+.pw-step.paused .step-num { color: var(--warn); }
+.pw-step.failed .step-num { color: var(--danger); }
+
+.step-status-ico {
+  width: 14px; flex-shrink: 0; display: flex; align-items: flex-start;
+  justify-content: center; padding-top: 2px; color: var(--fg-3);
+}
+.pw-step.completed .step-status-ico { color: var(--success); }
+.pw-step.running .step-status-ico { color: var(--info); }
+.pw-step.paused .step-status-ico { color: var(--warn); }
+.pw-step.failed .step-status-ico { color: var(--danger); }
+
+.step-body { flex: 1; min-width: 0; }
+.step-head { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; }
+.action-badge {
+  display: inline-flex; align-items: center; padding: 1px 5px; border-radius: 3px;
+  font-size: 9px; font-weight: 600; font-family: var(--font-mono);
+  text-transform: uppercase; letter-spacing: 0.4px; flex-shrink: 0;
+}
+.action-badge.action { background: var(--info-ghost); color: var(--info); }
+.action-badge.assert { background: var(--purple-ghost); color: var(--purple); }
+.action-badge.nav { background: var(--gray-ghost); color: var(--fg-2); }
+.action-badge.wait { background: rgba(210,153,34,0.12); color: var(--warn); }
+.step-label { font-size: 11.5px; font-weight: 500; color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.step-selector { font-family: var(--font-mono); font-size: 10px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-error { font-family: var(--font-mono); font-size: 10px; color: var(--danger); margin-top: 2px; line-height: 1.4; word-break: break-word; }
+
+.step-actions {
+  display: flex; gap: 2px; flex-shrink: 0; opacity: 0; transition: opacity 120ms; align-items: flex-start;
+}
+.pw-step:hover .step-actions,
+.pw-step.running .step-actions,
+.pw-step.failed .step-actions,
+.pw-step.paused .step-actions { opacity: 1; }
+.step-actions button {
+  width: 20px; height: 20px; border: none; background: transparent;
+  color: var(--fg-3); border-radius: 3px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.step-actions button:hover { background: var(--bg-hover); color: var(--fg-0); }
+.step-actions button.del:hover { color: var(--danger); background: var(--danger-ghost); }
+
+/* ── Replay controls ── */
+.pw-controls {
+  display: grid; grid-template-columns: 1fr; gap: 4px;
+  padding: 8px 12px; background: var(--bg-1); border-top: 1px solid var(--border-1);
+  flex-shrink: 0;
+}
+.pw-ctl {
+  height: 32px; background: var(--bg-2); border: 1px solid var(--border-2);
+  border-radius: 4px; color: var(--fg-1); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 1px; cursor: pointer;
+  transition: all 120ms; font-size: 9px; font-weight: 500; font-family: var(--font-sans);
+  letter-spacing: 0.3px; text-transform: uppercase;
+}
+.pw-ctl:hover { background: var(--bg-3); border-color: var(--border-3); color: var(--fg-0); }
+.pw-ctl:disabled { opacity: 0.4; pointer-events: none; }
+.pw-ctl.primary { color: var(--accent); border-color: var(--accent-line); background: var(--accent-ghost); }
+.pw-ctl.primary:hover { background: rgba(45,212,191,0.2); }
+.pw-ctl.warn { color: var(--warn); }
+.pw-ctl.warn:hover { background: var(--warn-ghost); border-color: rgba(210,153,34,0.4); }
+.pw-ctl.danger { color: var(--danger); }
+.pw-ctl.danger:hover { background: var(--danger-ghost); border-color: rgba(248,81,73,0.4); }
+.llm-dot-ctl {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 4px var(--accent); display: inline-block; margin-left: 2px;
+}
+.llm-dot-ctl.off { background: var(--fg-4); box-shadow: none; }
+
+/* ── Inline fix editor ── */
+.pw-fix-editor {
+  display: none; padding: 10px 12px; background: var(--warn-ghost);
+  border-bottom: 1px solid rgba(210,153,34,0.3); flex-shrink: 0;
+}
+.pw-fix-editor.show { display: block; }
+.fix-editor-title { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--warn); margin-bottom: 8px; }
+
+/* ── Force-fix cascade ── */
+.pw-cascade-wrap {
+  display: none; padding: 8px 12px; border-bottom: 1px solid var(--border-1); flex-shrink: 0;
+}
+.pw-cascade-wrap.show { display: block; }
+.pw-cascade { background: var(--bg-sunken); border: 1px solid var(--border-1); border-radius: 5px; overflow: hidden; }
+.pw-cascade-head {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  border-bottom: 1px solid var(--border-1); background: var(--bg-1);
+}
+.cascade-title { font-size: 11px; font-weight: 600; color: var(--fg-0); flex: 1; }
+.cascade-cancel { color: var(--accent); font-size: 10px; cursor: pointer; }
+.cascade-cancel:hover { text-decoration: underline; }
+.pw-progress { height: 3px; background: var(--bg-0); overflow: hidden; }
+.pw-progress-fill {
+  height: 100%; background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  transition: width 0.5s ease; position: relative;
+}
+.pw-cascade-stages { padding: 7px 10px; display: flex; flex-direction: column; gap: 4px; }
+.stage-row { display: flex; align-items: center; gap: 8px; font-size: 10.5px; font-family: var(--font-mono); }
+.stage-ico { width: 14px; height: 14px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.stage-ico.pending { color: var(--fg-4); }
+.stage-ico.running { color: var(--accent); }
+.stage-ico.pass { color: var(--success); }
+.stage-ico.fail { color: var(--danger); }
+.stage-lbl { flex: 1; color: var(--fg-2); }
+.stage-result { color: var(--fg-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+.stage-result.pass { color: var(--success); }
+.stage-result.fail { color: var(--danger); }
+
+/* LLM result box */
+.pw-llm-result {
+  display: none; margin: 0 10px 10px; padding: 8px 10px;
+  background: var(--accent-ghost); border: 1px solid var(--accent-line); border-radius: 5px;
+}
+.pw-llm-result.show { display: block; }
+.llm-result-label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+.llm-result-txt { font-size: 11px; color: var(--fg-1); line-height: 1.4; word-break: break-word; }
+.llm-selector-display { font-family: var(--font-mono); font-size: 10.5px; color: var(--accent); background: rgba(0,0,0,0.3); padding: 3px 7px; border-radius: 3px; margin-top: 5px; word-break: break-all; }
+.llm-result-btns { display: flex; gap: 6px; margin-top: 8px; }
+.llm-result-btns .pw-btn { flex: 1; height: 26px; font-size: 10.5px; }
+
+/* ── Versions section ── */
+.pw-versions-bar {
+  display: flex; align-items: center; gap: 6px; padding: 7px 12px;
+  background: var(--bg-1); border-top: 1px solid var(--border-1); flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.pw-versions-bar .pw-select { height: 26px; font-size: 10.5px; flex: 1; min-width: 80px; }
+.pw-versions-bar .pw-btn { height: 26px; font-size: 10.5px; }
+.pw-version-banner {
+  display: none; align-items: center; gap: 8px; padding: 5px 12px;
+  background: var(--purple-ghost); border-bottom: 1px solid rgba(163,113,247,0.25);
+  font-size: 10.5px; color: var(--fg-1); flex-shrink: 0;
+}
+.pw-version-banner.show { display: flex; }
+.pw-version-banner .ver-name { font-family: var(--font-mono); color: var(--purple); font-weight: 600; }
+.pw-version-banner .ver-switch { margin-left: auto; color: var(--accent); cursor: pointer; font-weight: 500; }
+.pw-version-banner .ver-switch:hover { text-decoration: underline; }
+
+/* Save version panel */
+.pw-save-version { display: none; padding: 10px 12px; background: var(--bg-1); border-bottom: 1px solid var(--border-1); flex-shrink: 0; }
+.pw-save-version.show { display: block; }
+
+/* ── Settings section ── */
+.pw-settings { display: none; padding: 10px 12px; border-top: 1px solid var(--border-1); background: var(--bg-1); flex-shrink: 0; }
+.pw-settings.show { display: block; }
+.settings-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.settings-label { font-size: 10.5px; color: var(--fg-2); width: 64px; flex-shrink: 0; }
+.settings-row:last-child { margin-bottom: 0; }
+.llm-verify-result { margin-top: 6px; padding: 6px 8px; border-radius: 4px; font-size: 10.5px; line-height: 1.4; word-break: break-word; }
+.llm-verify-result.ok { background: var(--success-ghost); color: var(--success); border: 1px solid rgba(63,185,80,0.2); }
+.llm-verify-result.fail { background: var(--warn-ghost); color: var(--warn); border: 1px solid rgba(210,153,34,0.2); }
+.llm-verify-result.checking { background: var(--gray-ghost); color: var(--fg-2); border: 1px solid var(--border-1); }
+
+/* ── Status bar ── */
+.pw-status-bar {
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+  background: var(--bg-sunken); border-top: 1px solid var(--border-1);
+  font-family: var(--font-mono); font-size: 10px; color: var(--fg-3); flex-shrink: 0;
+}
+.status-item { display: inline-flex; align-items: center; gap: 4px; }
+.status-item.ok { color: var(--success); }
+.status-item.warn { color: var(--warn); }
+.status-item.danger { color: var(--danger); }
+.status-item.accent { color: var(--accent); }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-sep { color: var(--fg-4); }
+.status-grow { flex: 1; }
+
+/* ── Warning banner ── */
+.pw-warning {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  background: var(--warn-ghost); border: 1px solid rgba(210,153,34,0.3);
+  border-radius: 4px; font-size: 10.5px; color: var(--warn);
+}
+
+/* ── Spinner ── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  width: 10px; height: 10px; border: 1.5px solid currentColor;
+  border-top-color: transparent; border-radius: 50%;
+  animation: spin 0.8s linear infinite; display: inline-block;
+}
+
+/* ── Replay status bar ── */
+#replay-status-bar {
+  display: none;
+  align-items: center; gap: 8px; padding: 7px 12px;
+  background: var(--bg-2); border-bottom: 1px solid var(--border-2);
+  font-size: 11px; color: var(--fg-1); flex-shrink: 0;
+  position: sticky; top: 0; z-index: 6;
+}
+#replay-status-bar.show { display: flex; }
+#replay-status-bar .rsb-spinner { flex-shrink: 0; }
+#replay-status-bar .rsb-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#replay-status-bar .rsb-progress { font-family: var(--font-mono); font-size: 10px; color: var(--fg-3); flex-shrink: 0; }
+#replay-status-bar.done { background: rgba(63,185,80,0.08); color: var(--success); }
+#replay-status-bar.failed-bar { background: var(--danger-ghost); color: var(--danger); }
+
+/* ── Failure panel ── */
+.pw-failure-panel {
+  display: none; margin: 8px 12px; border: 1px solid rgba(248,81,73,0.35);
+  border-radius: 6px; background: var(--danger-ghost); overflow: hidden; flex-shrink: 0;
+}
+.pw-failure-panel.show { display: block; }
+.fp-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid rgba(248,81,73,0.2); }
+.fp-title { font-size: 11.5px; font-weight: 600; color: var(--danger); flex: 1; }
+.fp-error { padding: 8px 12px; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-1); line-height: 1.5; word-break: break-word; border-bottom: 1px solid rgba(248,81,73,0.15); }
+.fp-actions { display: flex; gap: 6px; padding: 8px 12px; flex-wrap: wrap; }
+.fp-actions .pw-btn { flex: 1; min-width: 90px; }
+</style>
+</head>
+<body>
+
+<div id="panel-root">
+  <div id="resize-handle"></div>
+
+  <!-- Collapsed tab -->
+  <div id="collapsed-tab" title="Expand panel (click to open)">
+    <div class="collapsed-ico" style="margin-top:4px;">
+      <svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M3 2l4 3-4 3"/></svg>
+    </div>
+    <div class="collapsed-rec idle" id="collapsed-rec-dot" style="margin-top:2px;"></div>
+    <div class="collapsed-count" id="collapsed-step-count">0</div>
+  </div>
+
+  <!-- Main panel content -->
+  <div id="panel-content">
+
+    <!-- Header -->
+    <div class="pw-header">
+      <svg class="pw-logo" viewBox="0 0 18 18" fill="none">
+        <circle cx="9" cy="9" r="8" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="9" cy="9" r="3" fill="currentColor"/>
+      </svg>
+      <span class="pw-title">Playwright Agent</span>
+      <span class="pw-version">v1.0</span>
+      <button class="pw-pill on" id="llm-mode-pill" title="Toggle LLM mode">
+        <span class="dot"></span>
+        <span id="llm-mode-label">LLM</span>
+      </button>
+      <button class="pw-iconbtn" id="settings-btn" title="LLM Settings">
+        <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="7" cy="7" r="2"/><path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.6 2.6l1 1M10.4 10.4l1 1M2.6 11.4l1-1M10.4 3.6l1-1"/>
+        </svg>
+      </button>
+      <button class="pw-iconbtn" id="collapse-btn" title="Collapse panel">
+        <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2l-4 5 4 5"/></svg>
+      </button>
+    </div>
+
+    <!-- URL bar -->
+    <div class="pw-urlbar">
+      <span class="rec-dot idle" id="url-rec-dot"></span>
+      <span class="url-scheme" id="url-scheme">https://</span>
+      <span class="url-host" id="url-host">—</span>
+      <span class="url-path" id="url-path"></span>
+    </div>
+
+    <!-- Workflow banner: Record → Review → Replay -->
+    <div class="pw-workflow" id="workflow-banner">
+      <div class="pw-wf-step active" id="wf-record" data-stage="record">
+        <div class="wf-num">1</div>
+        <span class="wf-lbl">Record</span>
+      </div>
+      <div class="pw-wf-step" id="wf-review" data-stage="review">
+        <div class="wf-num">2</div>
+        <span class="wf-lbl">Review &amp; edit</span>
+      </div>
+      <div class="pw-wf-step" id="wf-replay" data-stage="replay">
+        <div class="wf-num">3</div>
+        <span class="wf-lbl">Replay</span>
+      </div>
+    </div>
+
+    <!-- LLM status banner -->
+    <div class="pw-llm-banner off" id="llm-banner">
+      <span class="llm-dot"></span>
+      <div class="llm-banner-body">
+        <div class="llm-banner-title" id="llm-banner-title">LLM not configured</div>
+        <div class="llm-banner-sub" id="llm-banner-sub">Add an API key in Settings to enable AI healing.</div>
+      </div>
+      <span class="llm-banner-action" id="llm-banner-action">Configure →</span>
+    </div>
+
+    <!-- ── MODE TOGGLE ── -->
+    <div class="pw-mode-toggle" id="mode-toggle">
+      <button class="pw-mode-btn active" id="mode-auto-btn" title="Auto: clicks recorded automatically as you browse">
+        <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor"><circle cx="6" cy="6" r="5" opacity="0.3"/><circle cx="6" cy="6" r="2.5"/></svg>
+        Auto
+      </button>
+      <button class="pw-mode-btn" id="mode-manual-btn" title="Manual: pick elements and choose actions yourself">
+        <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11"/></svg>
+        Manual
+      </button>
+    </div>
+
+    <!-- ── SCROLLABLE BODY — record zone + manual + steps all scroll together ── -->
+    <div id="panel-scroll-body">
+
+    <!-- ── REPLAY STATUS BAR ── -->
+    <div id="replay-status-bar">
+      <span class="spinner rsb-spinner" id="rsb-spinner"></span>
+      <span class="rsb-text" id="rsb-text">Preparing replay…</span>
+      <span class="rsb-progress" id="rsb-progress"></span>
+    </div>
+
+    <!-- ── RECORD ZONE (auto mode) ── -->
+    <div class="pw-record-zone" id="record-zone">
+      <button class="pw-record-btn" id="record-btn">
+        <span class="rec-ico"></span>
+        <span class="rec-grow">Start recording</span>
+        <span class="rec-kbd">⌥⇧R</span>
+      </button>
+      <div class="pw-record-meta" id="record-meta">
+        <span id="record-meta-text">Click to auto-capture every interaction</span>
+      </div>
+    </div>
+
+    <!-- Live capture ticker (shown during auto-record) -->
+    <div class="pw-live-capture" id="live-capture">
+      <span class="live-dot"></span>
+      <span class="live-txt" id="live-capture-txt">capturing…</span>
+    </div>
+
+    <!-- ── MANUAL MODE: action-first flow ── -->
+    <div class="pw-manual" id="manual-mode">
+      <div class="pw-manual-head" id="manual-mode-head">
+        <span class="pw-manual-chev">
+          <svg viewBox="0 0 10 10" width="10" height="10" fill="currentColor"><path d="M3 1l5 4-5 4V1z"/></svg>
+        </span>
+        <span class="pw-manual-lbl">Pick &amp; build (manual)</span>
+        <span class="pw-manual-hint">expand</span>
+      </div>
+      <div class="pw-manual-body">
+
+        <!-- Step 1: Choose action -->
+        <div class="pw-section">
+          <div class="pw-section-title">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M7 1l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z"/></svg>
+            <span>Step 1 — Choose action</span>
+            <span class="pw-help">?<span class="pw-help-tip">Pick the action first, then pick an element from the page. Page-level actions (navigate, wait, dialog) don't need an element.</span></span>
+          </div>
+          <div class="pw-row" style="gap:6px;">
+            <select class="pw-select" id="action-select" style="flex:1;">
+              <optgroup label="Element actions">
+                <option value="click">click</option>
+                <option value="fill">fill</option>
+                <option value="type">type</option>
+                <option value="check">check</option>
+                <option value="uncheck">uncheck</option>
+                <option value="select">select</option>
+                <option value="hover">hover</option>
+                <option value="focus">focus</option>
+                <option value="press">press</option>
+                <option value="upload">upload</option>
+              </optgroup>
+              <optgroup label="Assertions">
+                <option value="assert-visible">assert-visible</option>
+                <option value="assert-hidden">assert-hidden</option>
+                <option value="assert-text">assert-text</option>
+                <option value="assert-value">assert-value</option>
+                <option value="assert-checked">assert-checked</option>
+                <option value="assert-enabled">assert-enabled</option>
+                <option value="assert-url">assert-url</option>
+                <option value="assert-title">assert-title</option>
+              </optgroup>
+              <optgroup label="Page-level (no element needed)">
+                <option value="navigate">navigate</option>
+                <option value="navigate-back">navigate-back</option>
+                <option value="wait-for">wait-for</option>
+                <option value="wait-timeout">wait-timeout</option>
+                <option value="dialog-handle">dialog-handle</option>
+              </optgroup>
+            </select>
+            <button class="pw-btn" id="add-page-action-btn" title="Add page-level action (no element required)">
+              Page action
+            </button>
+          </div>
+          <div id="param-inputs" style="display:none;margin-top:6px;"></div>
+        </div>
+
+        <!-- Step 2: Pick element -->
+        <div class="pw-section" id="pick-section">
+          <div class="pw-section-title">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11"/></svg>
+            <span>Step 2 — Pick element</span>
+            <span class="pw-help">?<span class="pw-help-tip">Click "Pick from page", then click the element you want to interact with.</span></span>
+            <span class="sec-spacer"></span>
+            <span class="sec-count" id="pick-status-label">ready</span>
+          </div>
+          <button class="pw-pick-btn" id="pick-btn">
+            <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2l4 10 2-4 4-2L2 2z"/></svg>
+            <span id="pick-btn-label">Pick from page</span>
+            <span class="pick-kbd">Esc</span>
+          </button>
+          <div class="pick-status" id="pick-status">Pick an element, or choose a page-level action above.</div>
+
+          <!-- Candidates -->
+          <div id="candidates-container" style="display:none;margin-top:8px;">
+            <div style="font-size:10.5px;color:var(--fg-3);margin-bottom:5px;">
+              Locators for: <span id="candidates-target" style="color:var(--fg-1);font-family:var(--font-mono);"></span>
+            </div>
+            <div id="candidates-list"></div>
+            <button class="use-locator-btn" id="use-locator-btn">Use selected locator →</button>
+          </div>
+        </div>
+
+        <!-- Step 3: Validate & Add -->
+        <div class="pw-section" id="validate-section">
+          <div class="pw-section-title">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M3 2l7 4-7 4V2z"/></svg>
+            <span>Step 3 — Validate &amp; Add</span>
+            <span class="pw-help">?<span class="pw-help-tip">Validate to test the action on the live page. If it passes, click Add Step to save it.</span></span>
+          </div>
+          <div class="pw-row">
+            <button class="pw-btn" id="validate-btn" style="flex:1;">
+              <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M3 2l7 4-7 4V2z"/></svg>
+              Validate
+            </button>
+            <button class="pw-btn primary" id="add-step-btn" style="display:none;flex:1;">
+              <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M6 1v10M1 6h10"/></svg>
+              Add Step
+            </button>
+          </div>
+          <div class="pw-validate-result" id="validate-result">
+            <span id="validate-icon" style="flex-shrink:0;font-size:13px;"></span>
+            <span class="vr-msg" id="validate-text"></span>
+            <span class="vr-time" id="validate-time"></span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+      <!-- Steps toolbar (sticky inside scroll area) -->
+      <div class="pw-steps-toolbar" style="position:sticky;top:0;z-index:5;">
+        <span class="steps-toolbar-title">Steps</span>
+        <span class="pw-help">?<span class="pw-help-tip">Your recorded test steps. Click ▶ on any step to run it individually, or use Replay All to run all.</span></span>
+        <span class="steps-toolbar-count" id="steps-count-badge">· 0 steps</span>
+        <span class="steps-toolbar-grow"></span>
+      </div>
+
+      <!-- Version banner -->
+      <div class="pw-version-banner" id="version-banner">
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="var(--purple)" stroke-width="1.5"><path d="M6 1v5M6 6l-2 3M6 6l2 3"/></svg>
+        Viewing version: <span class="ver-name" id="version-banner-name"></span>
+        <span class="ver-switch" id="switch-to-main">switch to main →</span>
+      </div>
+
+      <!-- Step list -->
+      <div class="pw-steps" id="step-list">
+        <div class="empty-state" id="steps-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 12h6M9 16h6M9 8h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/>
+          </svg>
+          Press <strong style="color:var(--danger)">Start recording</strong> to auto-capture steps<br>
+          or use <strong style="color:var(--accent)">Manual</strong> mode to add them by picking.
+        </div>
+      </div>
+
+      <!-- ── FAILURE PANEL ── -->
+      <div class="pw-failure-panel" id="failure-panel">
+        <div class="fp-header">
+          <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor" style="color:var(--danger);flex-shrink:0;"><path d="M6 1L1 11h10L6 1zm0 3v3m0 2v1"/></svg>
+          <span class="fp-title" id="fp-title">Step failed</span>
+        </div>
+        <div class="fp-error" id="fp-error"></div>
+        <div class="fp-actions">
+          <button class="pw-btn danger" id="fp-autofix-btn">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M6 .5l1.2 2.8L10 4.5l-2.8 1.2L6 8.5 4.8 5.7 2 4.5l2.8-1.2L6 .5z"/></svg>
+            Auto-fix
+          </button>
+          <button class="pw-btn" id="fp-add-step-btn">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M6 1v10M1 6h10"/></svg>
+            Add step here
+          </button>
+          <button class="pw-btn" id="fp-resume-btn">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M2 1.5l8 4.5-8 4.5V1.5z"/></svg>
+            Resume anyway
+          </button>
+        </div>
+      </div>
+
+      <!-- ── INLINE FIX EDITOR ── -->
+      <div class="pw-fix-editor" id="fix-editor">
+        <div class="fix-editor-title">
+          <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><path d="M7 1l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z"/></svg>
+          Edit failing step
+        </div>
+        <div style="margin-bottom:6px;">
+          <div style="font-size:10px;color:var(--fg-3);margin-bottom:3px;">Locator</div>
+          <input type="text" class="pw-input" id="fix-locator-input" placeholder="Selector…" style="width:100%;"/>
+        </div>
+        <div style="margin-bottom:8px;">
+          <div style="font-size:10px;color:var(--fg-3);margin-bottom:3px;">Value / param</div>
+          <input type="text" class="pw-input" id="fix-param-input" placeholder="Value (if applicable)…" style="width:100%;"/>
+        </div>
+        <div class="pw-row">
+          <button class="pw-btn" id="fix-validate-btn" style="flex:1;">Validate fix</button>
+          <button class="pw-btn primary" id="fix-apply-btn" disabled style="flex:1;">Apply &amp; Resume</button>
+        </div>
+      </div>
+
+      <!-- ── FORCE-FIX CASCADE ── -->
+      <div class="pw-cascade-wrap" id="cascade-wrap">
+        <div class="pw-cascade">
+          <div class="pw-cascade-head">
+            <span class="spinner" id="cascade-spinner"></span>
+            <span class="cascade-title" id="cascade-title">Force-fix running…</span>
+            <span class="cascade-cancel" id="cascade-cancel">Cancel</span>
+          </div>
+          <div class="pw-progress"><div class="pw-progress-fill" id="cascade-progress" style="width:0%"></div></div>
+          <div class="pw-cascade-stages">
+            <div class="stage-row"><div class="stage-ico pending" id="s1-ico">—</div><span class="stage-lbl">Stage 1 — retry same selector</span><span class="stage-result" id="s1-res"></span></div>
+            <div class="stage-row"><div class="stage-ico pending" id="s2-ico">—</div><span class="stage-lbl">Stage 2 — fallback selectors</span><span class="stage-result" id="s2-res"></span></div>
+            <div class="stage-row"><div class="stage-ico pending" id="s3-ico">—</div><span class="stage-lbl">Stage 3 — alternate strategies</span><span class="stage-result" id="s3-res"></span></div>
+            <div class="stage-row"><div class="stage-ico pending" id="s4-ico">—</div><span class="stage-lbl">Stage 4 — LLM last resort</span><span class="stage-result" id="s4-res"></span></div>
+          </div>
+          <div class="pw-llm-result" id="llm-result-box">
+            <div class="llm-result-label">LLM Response</div>
+            <div class="llm-result-txt" id="llm-result-txt"></div>
+            <div class="llm-selector-display" id="llm-selector-display" style="display:none;"></div>
+            <div class="llm-result-btns">
+              <button class="pw-btn primary" id="accept-repair-btn">Accept repair</button>
+              <button class="pw-btn" id="try-manual-btn">Manual fix</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /panel-scroll-body -->
+
+    <!-- ── REPLAY CONTROLS (fixed at bottom) ── -->
+    <div class="pw-controls" id="replay-controls">
+      <!-- Edit mode -->
+      <button class="pw-ctl primary ctrl-edit" id="replay-btn" style="grid-column:1/-1;" disabled>
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><path d="M2 1.5l8 4.5-8 4.5V1.5z"/></svg>
+        <span>Replay All</span>
+      </button>
+      <!-- Replaying mode -->
+      <button class="pw-ctl ctrl-replay" id="pause-btn" style="display:none;">
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><rect x="2" y="2" width="3" height="8" rx="1"/><rect x="7" y="2" width="3" height="8" rx="1"/></svg>
+        <span>Pause</span>
+      </button>
+      <button class="pw-ctl danger ctrl-replay" id="stop-replay-btn" style="display:none;">
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1"/></svg>
+        <span>Stop</span>
+      </button>
+      <!-- Failed/Paused mode -->
+      <button class="pw-ctl warn ctrl-failed" id="resume-btn" style="display:none;">
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><path d="M2 1.5l8 4.5-8 4.5V1.5z"/></svg>
+        <span>Resume</span>
+      </button>
+      <button class="pw-ctl danger ctrl-failed" id="stop-failed-btn" style="display:none;">
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1"/></svg>
+        <span>Stop</span>
+      </button>
+    </div>
+
+    <!-- ── SAVE / LOAD BAR ── -->
+    <div class="pw-versions-bar" id="pw-versions-bar">
+      <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="var(--fg-2)" stroke-width="1.5"><path d="M1 1h7l3 3v7H1V1zm4 8a2 2 0 100-4 2 2 0 000 4z"/></svg>
+      <select class="pw-select" id="version-select" title="Load a saved recording">
+        <option value="main">— unsaved —</option>
+      </select>
+      <button class="pw-btn primary" id="save-version-btn" disabled title="Save current steps with a name">
+        <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor"><path d="M1 1h7l3 3v7H1V1zm4 8a2 2 0 100-4 2 2 0 000 4z"/></svg>
+        Save
+      </button>
+      <button class="pw-btn" id="delete-version-btn" style="display:none;" title="Delete this saved recording">
+        <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor"><path d="M4 1h4l1 1H3L4 1zM2 3h8l-.7 6.5a1 1 0 01-1 .5H3.7a1 1 0 01-1-.5L2 3z"/></svg>
+      </button>
+    </div>
+
+    <!-- Save dialog -->
+    <div class="pw-save-version" id="save-version-panel">
+      <div style="font-size:10.5px;color:var(--fg-1);font-weight:600;margin-bottom:6px;">Save recording</div>
+      <input type="text" class="pw-input" id="version-name-input" placeholder="Name (e.g. login-flow)…" style="width:100%;margin-bottom:6px;"/>
+      <div style="font-size:10px;color:var(--fg-3);margin-bottom:6px;">Saves all <span id="save-step-count">0</span> current steps.</div>
+      <div class="pw-row">
+        <button class="pw-btn" id="cancel-save-version-btn" style="flex:1;">Cancel</button>
+        <button class="pw-btn primary" id="confirm-save-version-btn" style="flex:1;">Save</button>
+      </div>
+    </div>
+
+    <!-- ── SETTINGS SECTION ── -->
+    <div class="pw-settings" id="settings-section">
+      <div class="pw-section-title" style="margin-bottom:10px;">
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2"/><path d="M6 1v1M6 10v1M1 6h1M10 6h1M2.2 2.2l.7.7M9.1 9.1l.7.7M2.2 9.8l.7-.7M9.1 2.9l.7-.7"/></svg>
+        <span>Settings / LLM</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Provider</span>
+        <select class="pw-select" id="settings-provider" style="flex:1;">
+          <option value="">— None —</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="openai_compatible">OpenAI-Compatible</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">API Key</span>
+        <input type="password" class="pw-input" id="settings-api-key" placeholder="sk-…" style="flex:1;"/>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Model</span>
+        <input type="text" class="pw-input" id="settings-model" placeholder="gpt-4o / claude-3-5-sonnet…" style="flex:1;"/>
+      </div>
+      <div class="settings-row" id="settings-base-url-row" style="display:none;">
+        <span class="settings-label">Base URL</span>
+        <input type="text" class="pw-input" id="settings-base-url" placeholder="http://localhost:1234/v1" style="flex:1;"/>
+      </div>
+      <button class="pw-btn primary" id="save-llm-config-btn" style="width:100%;margin-top:6px;">Save &amp; Test LLM config</button>
+      <div id="llm-verify-result" class="llm-verify-result" style="display:none;"></div>
+      <div style="font-size:10px;color:var(--fg-4);margin-top:5px;line-height:1.4;">
+        Persisted to <code style="color:var(--fg-3);font-family:var(--font-mono);">~/.agent/llm_config.json</code>. Force-fix stage 4 uses the configured LLM.
+      </div>
+    </div>
+
+    <!-- ── STATUS BAR ── -->
+    <div class="pw-status-bar">
+      <span class="status-item ok">
+        <span class="status-dot"></span>
+        Connected
+      </span>
+      <span class="status-sep">·</span>
+      <span class="status-item accent" id="sb-steps">0 steps</span>
+      <span class="status-sep">·</span>
+      <span class="status-item" id="sb-last-run">Last run: never</span>
+      <span class="status-grow"></span>
+      <span class="status-item" id="sb-llm">LLM: off</span>
+    </div>
+
+  </div><!-- /panel-content -->
+</div><!-- /panel-root -->
+
+<script>
+(function() {
+'use strict';
+
+// ── State ────────────────────────────────────────────────────────────────────
+const state = {
+  ws: null, connected: false,
+  recordMode: 'auto',        // 'auto' | 'manual'
+  recording: false,          // auto-record active
+  recordingSteps: 0,
+  recordElapsed: 0,
+  recordTimer: null,
+  picking: false,
+  candidates: [], selectedCandidateIdx: 0, pickedLocator: null,
+  steps: [], selectedStepId: null,
+  replayStatus: 'idle',      // idle | running | paused | failed
+  failingStepId: null,
+  forceFixActive: false,
+  llmAvailable: false, llmEnabled: false, llmVerified: null, llmVerifyMsg: '',
+  currentUrl: '',
+  insertAfterStepId: null,
+  _fixValidating: false,
+  activeVersion: 'main',
+  versions: [],
+  savingVersion: false,
+  settingsOpen: false,
+  workflowStage: 'record',   // record | review | replay
+  _stepRunStates: {},        // stepId -> 'running' | 'pass' | 'fail' | null
+  panelMode: 'edit',         // 'edit' | 'replaying' | 'failed'
+  _addingStepInFailed: false,
+};
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const root = $('panel-root');
+
+// ── Record mode toggle ───────────────────────────────────────────────────��────
+$('mode-auto-btn').addEventListener('click', () => setRecordMode('auto'));
+$('mode-manual-btn').addEventListener('click', () => setRecordMode('manual'));
+
+function setRecordMode(mode) {
+  state.recordMode = mode;
+  $('mode-auto-btn').classList.toggle('active', mode === 'auto');
+  $('mode-manual-btn').classList.toggle('active', mode === 'manual');
+
+  const recZone = $('record-zone');
+  const manualMode = $('manual-mode');
+  const metaTxt = $('record-meta-text');
+
+  if (mode === 'auto') {
+    recZone.style.display = '';
+    manualMode.classList.remove('open');
+    manualMode.querySelector('.pw-manual-hint').textContent = 'expand';
+    metaTxt.textContent = 'Click to auto-capture every interaction';
+  } else {
+    // Manual mode: hide record button, expand pick & build
+    if (!state.recording) recZone.style.display = 'none';
+    manualMode.classList.add('open');
+    manualMode.querySelector('.pw-manual-hint').textContent = 'collapse';
+  }
+}
+
+// WS
+function connectWs() {
+  const url = window.__agentPanelWsUrl || 'ws://127.0.0.1:8766/ws';
+  try { state.ws = new WebSocket(url); } catch(e) { scheduleReconnect(); return; }
+  state.ws.onopen = () => {
+    state.connected = true;
+    updateStatusBar();
+    send({ type: 'list_versions', payload: {} });
+  };
+  state.ws.onclose = () => { state.connected = false; updateStatusBar(); scheduleReconnect(); };
+  state.ws.onerror = () => {};
+  state.ws.onmessage = evt => {
+    let msg; try { msg = JSON.parse(evt.data); } catch(e) { return; }
+    handleMessage(msg);
+  };
+}
+function scheduleReconnect() { setTimeout(connectWs, 2000); }
+function send(msg) { if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(msg)); }
+
+// ── Message handling ──────────────────────────────────────────────────────────
+function handleMessage(msg) {
+  const { type, payload } = msg;
+  switch(type) {
+    case 'pick_result':       onPickResult(payload); break;
+    case 'validate_result':   onValidateResult(payload); break;
+    case 'replay_step_status': onStepStatus(payload); break;
+    case 'pause':             onPause(payload); break;
+    case 'run_completed':     onRunCompleted(); break;
+    case 'force_fix_progress': onForceFixProgress(payload); break;
+    case 'step_appended':     if (payload && payload.step) { appendStepToList(payload.step); } break;
+    case 'steps_state':       if (payload && payload.steps) { state.steps = payload.steps; renderStepList(); restorePauseState(); updateReplayControls(); } break;
+    case 'version_loaded':    onVersionLoaded(payload); break;
+    case 'versions_response': onVersionsResponse(payload); break;
+    case 'url_changed':       if (payload && payload.url) setUrl(payload.url); break;
+    case 'llm_config': {
+      if (payload) {
+        const provEl = $('settings-provider');
+        const modelEl = $('settings-model');
+        const keyEl = $('settings-api-key');
+        const baseEl = $('settings-base-url');
+        if (provEl && payload.provider) provEl.value = payload.provider;
+        if (modelEl && payload.model) modelEl.value = payload.model;
+        if (baseEl && payload.apiBase) baseEl.value = payload.apiBase;
+        // Show a placeholder in the key field if a key is already saved
+        if (keyEl && payload.hasApiKey && !keyEl.value) keyEl.placeholder = '(saved — paste to replace)';
+        // Show/hide base URL row
+        const baseRow = $('settings-base-url-row');
+        if (baseRow) baseRow.style.display = payload.provider === 'openai_compatible' ? 'flex' : 'none';
+      }
+      break;
+    }
+    case 'llm_status': {
+      state.llmAvailable = !!(payload && payload.available);
+      if (payload && payload.verified !== undefined) state.llmVerified = payload.verified;
+      if (payload && payload.verify_message) state.llmVerifyMsg = payload.verify_message;
+      updateLlmBanner();
+      // Update settings verify result if visible
+      if (payload && payload.verify_message && state.settingsOpen) {
+        const vr = $('llm-verify-result');
+        if (vr && vr.style.display !== 'none') {
+          const cls = state.llmVerified === true ? 'ok' : state.llmVerified === false ? 'fail' : 'checking';
+          vr.textContent = payload.verify_message;
+          vr.className = 'llm-verify-result ' + cls;
+        }
+      }
+      break;
+    }
+    case 'llm_config_updated': {
+      if (payload && payload.success) {
+        state.llmAvailable = !!(payload.available);
+        state.llmVerified = payload.verified !== undefined ? payload.verified : null;
+        state.llmVerifyMsg = payload.verify_message || 'Checking connection…';
+        updateLlmBanner();
+        // Show verify status in settings — stay open so user can see result
+        const vr = $('llm-verify-result');
+        if (vr) { vr.textContent = state.llmVerifyMsg; vr.className = 'llm-verify-result checking'; vr.style.display = 'block'; }
+      } else if (payload && !payload.success) {
+        const vr = $('llm-verify-result');
+        if (vr) { vr.textContent = payload.error || 'Failed to configure.'; vr.className = 'llm-verify-result fail'; vr.style.display = 'block'; }
+      }
+      break;
+    }
+  }
+}
+
+function restorePauseState() {
+  if (state.failingStepId) {
+    setWorkflowStage('replay');
+    setPanelMode('failed');
+  }
+}
+
+// ── Panel mode system ─────────────────────────────────────────────────────────
+function setPanelMode(mode) {
+  state.panelMode = mode;
+  const editing = mode === 'edit';
+  const replaying = mode === 'replaying';
+  const failed = mode === 'failed';
+
+  // Show/hide recording UI
+  $('mode-toggle').style.display = editing ? '' : 'none';
+  $('record-zone').style.display = editing ? '' : 'none';
+  if (!editing) $('live-capture').style.display = 'none';
+  $('manual-mode').style.display = (editing || (failed && state._addingStepInFailed)) ? '' : 'none';
+
+  // Replay status bar
+  $('replay-status-bar').classList.toggle('show', replaying || failed);
+
+  // Failure panel
+  $('failure-panel').classList.toggle('show', failed);
+
+  // Controls — show/hide static buttons by mode class
+  const ctrl = $('replay-controls');
+  ctrl.style.gridTemplateColumns = editing ? '1fr' : '1fr 1fr';
+  document.querySelectorAll('.ctrl-edit').forEach(b => b.style.display = editing ? '' : 'none');
+  document.querySelectorAll('.ctrl-replay').forEach(b => b.style.display = replaying ? '' : 'none');
+  document.querySelectorAll('.ctrl-failed').forEach(b => b.style.display = failed ? '' : 'none');
+
+  // Replay All button: enable only when there are steps
+  const rBtn = $('replay-btn');
+  if (rBtn) rBtn.disabled = state.steps.length === 0;
+
+  // Save / load bar
+  const vbar = $('pw-versions-bar');
+  if (vbar) vbar.style.display = editing ? '' : 'none';
+}
+
+function startReplay() {
+  state.replayStatus = 'running';
+  state.failingStepId = null;
+  state._addingStepInFailed = false;
+  state.steps.forEach(s => { s._uiStatus = 'pending'; s._error = null; });
+  renderStepList();
+  $('cascade-wrap').classList.remove('show');
+  $('fix-editor').classList.remove('show');
+  $('failure-panel').classList.remove('show');
+  setWorkflowStage('replay');
+  updateReplayStatusBar('running', null, null);
+  setPanelMode('replaying');
+  send({ type: 'replay', payload: {} });
+}
+
+function stopReplay() {
+  state.replayStatus = 'idle';
+  state.failingStepId = null;
+  state.forceFixActive = false;
+  state._addingStepInFailed = false;
+  state.steps.forEach(s => { s._uiStatus = 'pending'; s._error = null; });
+  $('replay-status-bar').classList.remove('show', 'done', 'failed-bar');
+  $('failure-panel').classList.remove('show');
+  $('cascade-wrap').classList.remove('show');
+  $('fix-editor').classList.remove('show');
+  renderStepList();
+  setPanelMode('edit');
+}
+
+function updateReplayStatusBar(type, stepId, error) {
+  const bar = $('replay-status-bar');
+  const step = stepId ? state.steps.find(s => s.stepId === stepId) : null;
+  const idx = step ? state.steps.indexOf(step) : -1;
+  const total = state.steps.length;
+  const spinner = $('rsb-spinner');
+  const txt = $('rsb-text');
+  const prog = $('rsb-progress');
+
+  bar.classList.remove('done', 'failed-bar');
+  if (type === 'running') {
+    bar.classList.add('show');
+    spinner.style.display = '';
+    if (step) {
+      const loc = (step.locator || '').slice(0, 40);
+      txt.textContent = 'Running — ' + step.action + (loc ? ' · ' + loc : '');
+      prog.textContent = (idx + 1) + ' / ' + total;
+    } else {
+      txt.textContent = 'Preparing replay…';
+      prog.textContent = '';
+    }
+  } else if (type === 'passed') {
+    spinner.style.display = 'none';
+    if (step) {
+      txt.textContent = '✓ Passed — ' + step.action;
+      prog.textContent = (idx + 1) + ' / ' + total;
+    }
+  } else if (type === 'done') {
+    bar.classList.add('done');
+    spinner.style.display = 'none';
+    txt.textContent = '✓ All ' + total + ' steps passed';
+    prog.textContent = '';
+  } else if (type === 'failed') {
+    bar.classList.add('failed-bar');
+    spinner.style.display = 'none';
+    txt.textContent = '✗ Failed at step ' + (idx + 1) + ' — ' + (step ? step.action : '');
+    prog.textContent = (idx + 1) + ' / ' + total;
+  } else if (type === 'paused') {
+    spinner.style.display = 'none';
+    txt.textContent = '⏸ Paused after step ' + (idx + 1);
+    prog.textContent = (idx + 1) + ' / ' + total;
+  }
+}
+
+function showFailurePanel(stepId, error) {
+  const step = state.steps.find(s => s.stepId === stepId);
+  const idx = step ? state.steps.indexOf(step) : -1;
+  $('fp-title').textContent = 'Step ' + (idx + 1) + ' failed — ' + (step ? step.action : '');
+  $('fp-error').textContent = error || (step && step._error) || 'Unknown error';
+  $('failure-panel').classList.add('show');
+  setTimeout(() => $('failure-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+}
+
+// ── URL ───────────────────────────────────────────────────────────────────────
+function setUrl(url) {
+  state.currentUrl = url;
+  const m = url.match(/^(https?:\/\/)([^\/]+)(.*)$/) || [];
+  $('url-scheme').textContent = m[1] || '';
+  $('url-host').textContent = m[2] || url;
+  $('url-path').textContent = m[3] || '';
+}
+
+// ── Workflow stage ────────────────────────────────────────────────────────────
+function setWorkflowStage(stage) {
+  state.workflowStage = stage;
+  const stages = ['record', 'review', 'replay'];
+  const idx = stages.indexOf(stage);
+  stages.forEach((s, i) => {
+    const el = $('wf-' + s);
+    el.classList.remove('active', 'done');
+    if (i < idx) { el.classList.add('done'); el.querySelector('.wf-num').textContent = '✓'; }
+    else if (i === idx) { el.classList.add('active'); el.querySelector('.wf-num').textContent = i + 1; }
+    else { el.querySelector('.wf-num').textContent = i + 1; }
+  });
+}
+
+// ── LLM banner ────────────────────────────────────────────────────────────────
+function updateLlmBanner() {
+  const banner = $('llm-banner');
+  const dot = $('ff-llm-dot');  // optional element — may be null
+  const pillLabel = $('llm-mode-label');
+  const pill = $('llm-mode-pill');
+  const vr = $('llm-verify-result');
+
+  if (!state.llmAvailable) {
+    banner.className = 'pw-llm-banner off';
+    $('llm-banner-title').textContent = 'LLM not configured';
+    $('llm-banner-sub').textContent = 'Add an API key in Settings to enable AI healing.';
+    $('llm-banner-action').style.display = '';
+    if (dot) dot.className = 'llm-dot-ctl off';
+    pillLabel.textContent = 'LLM:OFF';
+    pill.className = 'pw-pill off';
+    $('sb-llm').textContent = 'LLM: off';
+    $('sb-llm').className = 'status-item danger';
+  } else if (state.llmVerified === null) {
+    // Configured but not yet verified (e.g. just started, checking…)
+    banner.className = 'pw-llm-banner warn';
+    $('llm-banner-title').textContent = 'LLM configured — verifying…';
+    $('llm-banner-sub').textContent = state.llmVerifyMsg || 'Checking connection to the API…';
+    $('llm-banner-action').style.display = 'none';
+    if (dot) dot.className = 'llm-dot-ctl';
+    pillLabel.textContent = 'LLM:ON';
+    pill.className = 'pw-pill on';
+    $('sb-llm').textContent = 'LLM: checking';
+    $('sb-llm').className = 'status-item warn';
+  } else if (state.llmVerified === false) {
+    // Configured but verification failed
+    banner.className = 'pw-llm-banner warn';
+    $('llm-banner-title').textContent = 'LLM config error';
+    $('llm-banner-sub').textContent = state.llmVerifyMsg || 'Could not reach the API — check your key and model.';
+    $('llm-banner-action').style.display = '';
+    $('llm-banner-action').textContent = 'Fix →';
+    if (dot) dot.className = 'llm-dot-ctl off';
+    pillLabel.textContent = 'LLM:ERR';
+    pill.className = 'pw-pill off';
+    $('sb-llm').textContent = 'LLM: error';
+    $('sb-llm').className = 'status-item warn';
+    if (vr) { vr.textContent = state.llmVerifyMsg; vr.className = 'llm-verify-result fail'; vr.style.display = 'block'; }
+  } else {
+    // Verified and connected
+    banner.className = state.llmEnabled ? 'pw-llm-banner active' : 'pw-llm-banner ready';
+    $('llm-banner-title').textContent = state.llmEnabled ? 'LLM active ✓' : 'LLM ready ✓';
+    $('llm-banner-sub').textContent = state.llmVerifyMsg || 'Force-fix will use AI when locator scoring is inconclusive.';
+    $('llm-banner-action').style.display = 'none';
+    if (dot) dot.className = 'llm-dot-ctl';
+    pillLabel.textContent = 'LLM:ON';
+    pill.className = 'pw-pill on';
+    $('sb-llm').textContent = 'LLM: verified ✓';
+    $('sb-llm').className = 'status-item ok';
+    if (vr) { vr.textContent = state.llmVerifyMsg; vr.className = 'llm-verify-result ok'; vr.style.display = 'block'; }
+  }
+}
+
+// ── Record zone ───────────────────────────────────────────────────────────────
+$('record-btn').addEventListener('click', toggleRecording);
+
+function toggleRecording() {
+  state.recording = !state.recording;
+  const btn = $('record-btn');
+  const dot = $('url-rec-dot');
+  const collDot = $('collapsed-rec-dot');
+  const live = $('live-capture');
+
+  if (state.recording) {
+    btn.classList.add('live');
+    btn.querySelector('.rec-grow').textContent = 'Stop recording';
+    dot.classList.remove('idle');
+    collDot.classList.remove('idle');
+    live.classList.add('show');
+    state.recordingSteps = 0;
+    state.recordElapsed = 0;
+    updateRecordMeta();
+    state.recordTimer = setInterval(() => { state.recordElapsed++; updateRecordMeta(); }, 1000);
+    send({ type: 'start_recording', payload: {} });
+    setWorkflowStage('record');
+  } else {
+    btn.classList.remove('live');
+    btn.querySelector('.rec-grow').textContent = 'Start recording';
+    dot.classList.add('idle');
+    collDot.classList.remove('idle');  // clear recording dot
+    collDot.classList.add('idle');
+    live.classList.remove('show');
+    if (state.recordTimer) { clearInterval(state.recordTimer); state.recordTimer = null; }
+    const metaTxt = $('record-meta-text');
+    if (metaTxt) metaTxt.textContent = 'Click to auto-capture every interaction';
+    send({ type: 'stop_recording', payload: {} });
+    if (state.steps.length > 0) {
+      setWorkflowStage('review');
+      $('save-version-btn').disabled = false;
+    }
+  }
+}
+
+function updateRecordMeta() {
+  const m = Math.floor(state.recordElapsed / 60);
+  const s = String(state.recordElapsed % 60).padStart(2, '0');
+  const elapsed = `${m}:${s}`;
+  const metaTxt = $('record-meta-text');
+  if (metaTxt) metaTxt.textContent = `● REC  ${elapsed}  ·  ${state.recordingSteps} steps`;
+  $('record-meta').style.color = 'var(--danger)';
+}
+
+function bumpRecordingStep(stepLabel) {
+  if (state.recording) {
+    state.recordingSteps++;
+    updateRecordMeta();
+    const txt = $('live-capture-txt');
+    txt.innerHTML = `capturing <span class="live-verb">${escHtml(stepLabel || 'action')}</span>`;
+  }
+}
+
+// ── Manual mode toggle ────────────────────────────────────────────────────────
+$('manual-mode-head').addEventListener('click', () => {
+  const m = $('manual-mode');
+  const open = m.classList.toggle('open');
+  m.querySelector('.pw-manual-hint').textContent = open ? 'collapse' : 'expand';
+});
+
+// ── Pick ──────────────────────────────────────────────────────────────────────
+$('pick-btn').addEventListener('click', () => { state.picking ? cancelPick() : startPick(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.picking) cancelPick(); });
+
+function startPick() {
+  state.picking = true; state.pickedLocator = null; state.candidates = [];
+  $('candidates-container').style.display = 'none';
+  $('pick-btn').classList.add('active');
+  $('pick-btn-label').textContent = 'Click an element… (Esc to cancel)';
+  $('pick-status').textContent = 'Hover over the page and click an element…';
+  $('pick-status').className = 'pick-status picking';
+  $('pick-status-label').textContent = 'picking…';
+  send({ type: 'pick_start', payload: {} });
+}
+
+function cancelPick() {
+  state.picking = false;
+  $('pick-btn').classList.remove('active');
+  $('pick-btn-label').textContent = 'Pick from page';
+  $('pick-status').textContent = 'Pick an element, or choose a page-level action above.';
+  $('pick-status').className = 'pick-status';
+  $('pick-status-label').textContent = 'ready';
+  send({ type: 'pick_cancel', payload: {} });
+}
+
+function onPickResult(payload) {
+  state.picking = false;
+  $('pick-btn').classList.remove('active');
+  $('pick-btn-label').textContent = 'Pick element from page';
+  $('pick-status').className = 'pick-status';
+  $('pick-status-label').textContent = 'ready';
+
+  const { descriptor, candidates } = payload;
+  state.candidates = candidates || [];
+  state.selectedCandidateIdx = 0;
+
+  if (!state.candidates.length) {
+    $('pick-status').textContent = 'No locators found.';
+    return;
+  }
+  const target = descriptor && (descriptor.text || descriptor.tag || 'element');
+  $('pick-status').textContent = `Picked: ${String(target).slice(0, 60)}`;
+  $('candidates-target').textContent = String(target).slice(0, 40);
+  $('candidates-container').style.display = 'block';
+  renderCandidates();
+}
+
+function renderCandidates() {
+  const list = $('candidates-list');
+  list.innerHTML = '';
+  state.candidates.slice(0, 5).forEach((c, i) => {
+    const score = c.confidenceScore || 0;
+    const strat = (c.strategy || '').toLowerCase();
+    const scoreClass = score >= 0.8 ? '' : score >= 0.7 ? 'mid' : 'low';
+    const row = document.createElement('div');
+    row.className = 'pw-cand' + (i === state.selectedCandidateIdx ? ' selected' : '');
+    row.innerHTML = `
+      <span class="cand-strategy ${strat}">${escHtml(strat || 'css')}</span>
+      <span class="cand-sel">${escHtml((c.selector || '').slice(0, 55))}</span>
+      <div class="cand-conf">
+        <div class="conf-bar"><div class="conf-fill ${scoreClass}" style="width:${Math.round(score*100)}%"></div></div>
+        <span class="conf-num">${Math.round(score*100)}%</span>
+      </div>`;
+    row.addEventListener('click', () => {
+      state.selectedCandidateIdx = i;
+      document.querySelectorAll('.pw-cand').forEach((r, j) => r.classList.toggle('selected', j === i));
+    });
+    list.appendChild(row);
+  });
+}
+
+$('use-locator-btn').addEventListener('click', () => {
+  const c = state.candidates[state.selectedCandidateIdx];
+  if (!c) return;
+  state.pickedLocator = c.selector;
+  $('candidates-container').style.display = 'none';
+  $('pick-section').style.opacity = '';
+  $('pick-status').textContent = `✓ Using: ${c.selector.slice(0, 55)}`;
+  $('pick-status').className = 'pick-status picked';
+  setContextualAction(c);
+  resetValidate();
+});
+
+function setContextualAction(candidate) {
+  const tag = (candidate.tag || '').toLowerCase();
+  const inputType = (candidate.inputType || '').toLowerCase();
+  const sel = $('action-select');
+  if (tag === 'input' && inputType === 'checkbox') sel.value = 'check';
+  else if (tag === 'input' || tag === 'textarea') sel.value = 'fill';
+  else if (tag === 'select') sel.value = 'select';
+  else sel.value = 'click';
+  updateParamInputs();
+}
+
+// ── Action config ─────────────────────────────────────────────────────────────
+const PAGE_LEVEL_ACTIONS = new Set(['navigate','navigate-back','wait-for','wait-timeout','dialog-handle','assert-url','assert-title']);
+
+$('action-select').addEventListener('change', () => {
+  updateParamInputs();
+  resetValidate();
+  // When switching to a page-level action, dim the pick section; restore otherwise
+  const action = $('action-select').value;
+  if (PAGE_LEVEL_ACTIONS.has(action)) {
+    $('pick-section').style.opacity = '0.5';
+    $('pick-status').textContent = 'No element needed for this action.';
+    $('pick-status').className = 'pick-status';
+  } else if (!state.pickedLocator) {
+    $('pick-section').style.opacity = '';
+    $('pick-status').textContent = 'Pick an element, or choose a page-level action above.';
+    $('pick-status').className = 'pick-status';
+  }
+});
+
+function updateParamInputs() {
+  const action = $('action-select').value;
+  const textActions = ['fill','type','assert-text','assert-title','assert-url','assert-value','navigate','press'];
+  const numActions = ['wait-timeout'];
+  const stateActions = ['wait-for'];
+  const dialogActions = ['dialog-handle'];
+  const fileActions = ['upload'];
+  let html = '';
+  if (textActions.includes(action)) {
+    const ph = { fill:'Text to fill…', type:'Text to type…', 'assert-text':'Expected text…', 'assert-title':'Expected title…', 'assert-url':'Expected URL…', 'assert-value':'Expected value…', navigate:'https://…', press:'Enter / Tab / …' }[action] || 'Value…';
+    html = `<input type="text" class="pw-input" id="action-param" placeholder="${ph}" style="width:100%"/>`;
+  } else if (numActions.includes(action)) {
+    html = `<input type="number" class="pw-input" id="action-param" placeholder="Timeout ms (default 5000)" style="width:100%"/>`;
+  } else if (stateActions.includes(action)) {
+    html = `<select class="pw-select" id="action-param" style="width:100%"><option value="visible">visible</option><option value="hidden">hidden</option><option value="attached">attached</option><option value="detached">detached</option></select>`;
+  } else if (dialogActions.includes(action)) {
+    html = `<div style="display:flex;gap:10px;font-size:11px;color:var(--fg-2);align-items:center;"><label><input type="radio" name="dlg" value="accept" checked> accept</label><label><input type="radio" name="dlg" value="dismiss"> dismiss</label></div>`;
+  } else if (fileActions.includes(action)) {
+    html = `<input type="text" class="pw-input" id="action-param" placeholder="/path/to/file.pdf" style="width:100%"/>`;
+  }
+  const pi = $('param-inputs');
+  pi.innerHTML = html;
+  pi.style.display = html ? 'block' : 'none';
+}
+
+function getActionParams() {
+  const action = $('action-select').value;
+  const p = document.getElementById('action-param');
+  if (p) return { text: p.value, value: p.value };
+  const dlg = document.querySelector('input[name="dlg"]:checked');
+  if (dlg) return { action: dlg.value };
+  return {};
+}
+
+// ── Validate ──────────────────────────────────────────────────────────────────
+$('validate-btn').addEventListener('click', doValidate);
+
+function doValidate() {
+  const action = $('action-select').value;
+  const locator = state.pickedLocator || null;
+  const params = getActionParams();
+
+  // Guard: element actions need a locator picked first
+  if (!locator && !PAGE_LEVEL_ACTIONS.has(action)) {
+    const vr = $('validate-result');
+    vr.className = 'pw-validate-result show fail';
+    $('validate-icon').textContent = '⚠';
+    $('validate-text').textContent = 'Pick an element first (Step 2 above)';
+    $('validate-time').textContent = '';
+    $('add-step-btn').style.display = 'none';
+    return;
+  }
+
+  state._fixValidating = false;
+  resetValidate();
+  $('validate-btn').disabled = true;
+  send({ type: 'validate_step', payload: { action, locator, params } });
+}
+
+function onValidateResult(payload) {
+  $('validate-btn').disabled = false;
+  const { passed, error, durationMs } = payload;
+
+  if (state._fixValidating) {
+    state._fixValidating = false;
+    $('fix-apply-btn').disabled = !passed;
+    return;
+  }
+
+  // Per-step run result
+  if (state._pendingStepRunId) {
+    const sid = state._pendingStepRunId;
+    state._pendingStepRunId = null;
+    const step = state.steps.find(s => s.stepId === sid);
+    if (step) {
+      state._stepRunStates[sid] = passed ? 'pass' : 'fail';
+      if (!passed) step._stepError = error || 'failed';
+      else delete step._stepError;
+    }
+    renderStepList();
+    return;
+  }
+
+  const vr = $('validate-result');
+  vr.classList.add('show');
+  $('validate-time').textContent = durationMs ? `${durationMs}ms` : '';
+  if (passed) {
+    vr.className = 'pw-validate-result show pass';
+    $('validate-icon').textContent = '✓';
+    $('validate-text').textContent = 'Passed';
+    $('add-step-btn').style.display = 'flex';
+  } else {
+    vr.className = 'pw-validate-result show fail';
+    $('validate-icon').textContent = '✗';
+    $('validate-text').textContent = error || 'Failed';
+    $('add-step-btn').style.display = 'none';
+  }
+}
+
+function resetValidate() {
+  const vr = $('validate-result');
+  vr.className = 'pw-validate-result';
+  $('validate-icon').textContent = '';
+  $('validate-text').textContent = '';
+  $('validate-time').textContent = '';
+  $('add-step-btn').style.display = 'none';
+}
+
+// ── Add Step ──────────────────────────────────────────────────────────────────
+$('add-step-btn').addEventListener('click', () => {
+  const action = $('action-select').value;
+  const locator = state.pickedLocator;
+  const params = getActionParams();
+  send({ type: 'append_step', payload: { action, locator, params, insertAfterStepId: state.insertAfterStepId } });
+  state.insertAfterStepId = null;
+  state.pickedLocator = null;
+  $('pick-status').textContent = 'Pick an element, or choose a page-level action above.';
+  $('pick-section').style.opacity = '';
+  $('candidates-container').style.display = 'none';
+  resetValidate();
+  if (state.workflowStage === 'record') setWorkflowStage('review');
+  $('save-version-btn').disabled = false;
+});
+
+$('add-page-action-btn').addEventListener('click', () => {
+  // Page-level actions don't need an element — skip pick step, go straight to validate
+  state.pickedLocator = null;
+  $('pick-status').textContent = 'Page action — no element required.';
+  $('candidates-container').style.display = 'none';
+  $('pick-section').style.opacity = '0.5';
+  resetValidate();
+  updateParamInputs();
+});
+
+// ── Step list rendering ───────────────────────────────────────────────────────
+function appendStepToList(step) {
+  state.steps.push(step);
+  bumpRecordingStep(step.action);
+  renderStepList();
+  updateStatusBar();
+  $('save-version-btn').disabled = false;
+  // Enable replay button now that we have steps
+  const rBtn = $('replay-btn');
+  if (rBtn) rBtn.disabled = false;
+  if (state.workflowStage === 'record') setWorkflowStage('review');
+  // If we just added a step in failed mode, collapse the manual panel
+  if (state._addingStepInFailed) {
+    state._addingStepInFailed = false;
+    $('manual-mode').style.display = 'none';
+  }
+}
+
+function renderStepList() {
+  const count = state.steps.length;
+  $('steps-count-badge').textContent = `· ${count} step${count !== 1 ? 's' : ''}`;
+  $('collapsed-step-count').textContent = count;
+  $('sb-steps').textContent = `${count} steps`;
+  $('steps-empty').style.display = count ? 'none' : 'block';
+
+  // remove existing step rows (keep empty state)
+  const list = $('step-list');
+  Array.from(list.children).forEach(ch => { if (!ch.id || ch.id !== 'steps-empty') list.removeChild(ch); });
+
+  state.steps.forEach((step, idx) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'pw-step-wrap';
+    wrap.dataset.stepId = step.stepId;
+
+    // Insert line before first
+    if (idx === 0) wrap.appendChild(makeInsertLine(null));
+
+    const row = document.createElement('div');
+    const status = step._uiStatus || 'pending';
+    row.className = `pw-step ${status}` + (step.stepId === state.selectedStepId ? ' selected' : '');
+    row.dataset.stepId = step.stepId;
+
+    const locShort = truncate(step.locator || '', 45);
+    const badge = inferBadge(step.action);
+
+    const stepRunState = state._stepRunStates[step.stepId];
+    const inlineResultHtml = stepRunState === 'pass'
+      ? `<div class="step-inline-result pass">✓ passed</div>`
+      : stepRunState === 'fail'
+        ? `<div class="step-inline-result fail">✗ ${escHtml(step._stepError || 'failed')} <span style="color:var(--accent);cursor:pointer;" data-step-fix="${step.stepId}"> Fix →</span></div>`
+        : '';
+
+    const showActions = state.panelMode === 'edit';
+    row.innerHTML = `
+      <span class="step-num">${String(idx + 1).padStart(2, '0')}</span>
+      <span class="step-status-ico">${statusIconHtml(status)}</span>
+      <div class="step-body">
+        <div class="step-head">
+          <span class="action-badge ${badge.cls}">${escHtml(badge.label)}</span>
+          <span class="step-label">${escHtml(step.action || '')}${step.params && step.params.text ? ' · "' + escHtml(String(step.params.text).slice(0, 28)) + '"' : ''}</span>
+        </div>
+        ${locShort ? `<div class="step-selector">${escHtml(locShort)}</div>` : ''}
+        ${step._error ? `<div class="step-error">${escHtml(step._error)}</div>` : ''}
+        ${inlineResultHtml}
+      </div>
+      ${showActions ? `<div class="step-actions">
+        <button class="step-run-btn" title="Run this step" data-run="${step.stepId}"><svg viewBox="0 0 10 10" width="9" height="9" fill="currentColor"><path d="M2 1.5l6 3.5-6 3.5V1.5z"/></svg></button>
+        <button title="Duplicate" data-dup="${step.stepId}"><svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="3" width="7" height="8" rx="1"/><path d="M4 3V2a1 1 0 011-1h5a1 1 0 011 1v8a1 1 0 01-1 1H9"/></svg></button>
+        <button class="del" title="Delete" data-del="${step.stepId}"><svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor"><path d="M4 1h4l1 1H3L4 1zM2 3h8l-.7 6.5a1 1 0 01-1 .5H3.7a1 1 0 01-1-.5L2 3z"/></svg></button>
+      </div>` : ''}`;
+
+    row.addEventListener('click', e => {
+      const del = e.target.closest('[data-del]');
+      const dup = e.target.closest('[data-dup]');
+      const run = e.target.closest('[data-run]');
+      const fix = e.target.closest('[data-step-fix]');
+      if (del) { send({ type: 'delete_step', payload: { stepId: del.dataset.del } }); state.steps = state.steps.filter(s => s.stepId !== del.dataset.del); renderStepList(); updateReplayControls(); return; }
+      if (dup) { send({ type: 'duplicate_step', payload: { stepId: dup.dataset.dup } }); return; }
+      if (run) { runSingleStep(run.dataset.run); return; }
+      if (fix) {
+        const s = state.steps.find(st => st.stepId === fix.dataset.stepFix);
+        if (s) {
+          state.failingStepId = s.stepId;
+          $('fix-editor').classList.add('show');
+          $('fix-locator-input').value = s.locator || '';
+          $('fix-param-input').value = (s.params && s.params.text) || '';
+          $('fix-apply-btn').disabled = true;
+          $('fix-editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        return;
+      }
+      state.selectedStepId = step.stepId === state.selectedStepId ? null : step.stepId;
+      renderStepList();
+    });
+
+    wrap.appendChild(row);
+    wrap.appendChild(makeInsertLine(step.stepId));
+    list.appendChild(wrap);
+  });
+}
+
+function makeInsertLine(afterId) {
+  const ins = document.createElement('div');
+  ins.className = 'pw-insert';
+  ins.innerHTML = '<div class="ins-btn">+</div>';
+  ins.addEventListener('click', () => {
+    state.insertAfterStepId = afterId;
+    $('pick-status').textContent = afterId
+      ? `Will insert after step #${state.steps.findIndex(s => s.stepId === afterId) + 1}`
+      : 'Will insert at beginning';
+    $('manual-mode').classList.add('open');
+    $('manual-mode').querySelector('.pw-manual-hint').textContent = 'collapse';
+  });
+  return ins;
+}
+
+function statusIconHtml(status) {
+  if (status === 'running') return `<span class="spinner"></span>`;
+  if (status === 'passed' || status === 'completed') return `<svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><path d="M1.5 5l2.5 2.5 4.5-4.5"/></svg>`;
+  if (status === 'failed') return `<svg viewBox="0 0 10 10" width="10" height="10" fill="currentColor"><path d="M7.5 2.5l-5 5M2.5 2.5l5 5"/></svg>`;
+  if (status === 'paused') return `<svg viewBox="0 0 10 10" width="10" height="10" fill="currentColor"><rect x="2" y="2" width="2.5" height="6" rx=".5"/><rect x="5.5" y="2" width="2.5" height="6" rx=".5"/></svg>`;
+  return `<svg viewBox="0 0 10 10" width="8" height="8" fill="currentColor" opacity="0.3"><circle cx="5" cy="5" r="2"/></svg>`;
+}
+
+function inferBadge(action) {
+  if (!action) return { cls: 'action', label: 'action' };
+  if (action.startsWith('assert')) return { cls: 'assert', label: 'assert' };
+  if (action === 'navigate' || action === 'navigate_back' || action === 'navigate-back') return { cls: 'nav', label: 'nav' };
+  if (action.startsWith('wait')) return { cls: 'wait', label: 'wait' };
+  return { cls: 'action', label: 'action' };
+}
+
+// ── Per-step run ──────────────────────────────────────────────────────────────
+function runSingleStep(stepId) {
+  const step = state.steps.find(s => s.stepId === stepId);
+  if (!step) return;
+  state._stepRunStates[stepId] = 'running';
+  renderStepList();
+  send({ type: 'validate_step', payload: {
+    action: step.action,
+    locator: step.locator || null,
+    params: step.params || {},
+    _forStepId: stepId,
+  }});
+  // Track that we're waiting for a per-step result
+  state._pendingStepRunId = stepId;
+}
+
+// ── Replay controls (static buttons wired once) ───────────────────────────────
+$('replay-btn').addEventListener('click', startReplay);
+
+$('pause-btn').addEventListener('click', () => {
+  send({ type: 'pause_request', payload: {} });
+});
+
+$('stop-replay-btn').addEventListener('click', stopReplay);
+
+$('resume-btn').addEventListener('click', () => {
+  state.replayStatus = 'running';
+  $('fix-editor').classList.remove('show');
+  $('failure-panel').classList.remove('show');
+  send({ type: 'resume', payload: {} });
+  setPanelMode('replaying');
+  updateReplayStatusBar('running', null, null);
+});
+
+$('stop-failed-btn').addEventListener('click', stopReplay);
+
+// ── Failure panel button handlers ─────────────────────────────────────────────
+$('fp-autofix-btn').addEventListener('click', () => {
+  if (!state.failingStepId) return;
+  state.forceFixActive = true;
+  $('cascade-wrap').classList.add('show');
+  $('fix-editor').classList.remove('show');
+  resetCascadeStages();
+  $('cascade-spinner').style.display = '';
+  $('cascade-title').textContent = 'Auto-fix running…';
+  $('cascade-progress').style.width = '0%';
+  $('llm-result-box').classList.remove('show');
+  send({ type: 'force_fix', payload: { stepId: state.failingStepId } });
+});
+
+$('fp-add-step-btn').addEventListener('click', () => {
+  state.insertAfterStepId = state.failingStepId;
+  state._addingStepInFailed = true;
+  $('manual-mode').style.display = '';
+  $('manual-mode').classList.add('open');
+  $('manual-mode').querySelector('.pw-manual-hint').textContent = 'collapse';
+  setTimeout(() => $('manual-mode').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+});
+
+$('fp-resume-btn').addEventListener('click', () => {
+  state.replayStatus = 'running';
+  send({ type: 'resume', payload: {} });
+  $('failure-panel').classList.remove('show');
+  setPanelMode('replaying');
+  updateReplayStatusBar('running', null, null);
+});
+
+$('cascade-cancel').addEventListener('click', () => {
+  $('cascade-wrap').classList.remove('show');
+  state.forceFixActive = false;
+});
+
+function onStepStatus(payload) {
+  const { stepId, status, error } = payload;
+  const step = state.steps.find(s => s.stepId === stepId);
+  if (step) { step._uiStatus = status; if (error) step._error = error; }
+  if (status === 'failed') {
+    state.failingStepId = stepId;
+    state.replayStatus = 'failed';
+    updateReplayStatusBar('failed', stepId, error);
+    showFailurePanel(stepId, error);
+    setPanelMode('failed');
+  } else if (status === 'running') {
+    updateReplayStatusBar('running', stepId, null);
+  } else if (status === 'passed') {
+    updateReplayStatusBar('passed', stepId, null);
+  }
+  renderStepList();
+}
+
+function onPause(payload) {
+  state.replayStatus = 'paused';
+  const { stepId } = payload;
+  if (stepId) {
+    const step = state.steps.find(s => s.stepId === stepId);
+    if (step && step._uiStatus !== 'failed') step._uiStatus = 'paused';
+  }
+  updateReplayStatusBar('paused', stepId || null, null);
+  setPanelMode('failed'); // paused uses failed mode controls (Resume/Stop)
+  renderStepList();
+}
+
+function onRunCompleted() {
+  state.replayStatus = 'idle';
+  state.failingStepId = null;
+  updateReplayStatusBar('done', null, null);
+  $('sb-last-run').textContent = 'Last run: all passed';
+  $('sb-last-run').className = 'status-item ok';
+  setTimeout(() => {
+    if (state.replayStatus === 'idle') stopReplay();
+  }, 2000);
+}
+
+function updateReplayControls() {
+  const hasSteps = state.steps.length > 0;
+  const rBtn = $('replay-btn');
+  if (rBtn) rBtn.disabled = !hasSteps;
+  if (hasSteps) $('save-version-btn').disabled = false;
+}
+
+// ── Fix editor ────────────────────────────────────────────────────────────────
+$('fix-validate-btn').addEventListener('click', () => {
+  const locator = $('fix-locator-input').value.trim();
+  const step = state.steps.find(s => s.stepId === state.failingStepId);
+  if (!locator || !step) return;
+  state._fixValidating = true;
+  $('fix-apply-btn').disabled = true;
+  send({ type: 'validate_step', payload: { action: step.action, locator, params: step.params || {} } });
+});
+
+$('fix-apply-btn').addEventListener('click', () => {
+  const locator = $('fix-locator-input').value.trim();
+  if (!locator) return;
+  const paramVal = $('fix-param-input').value;
+  send({ type: 'resume', payload: { overrideStep: { stepId: state.failingStepId, locator, params: paramVal ? { text: paramVal, value: paramVal } : undefined } } });
+  $('fix-editor').classList.remove('show');
+  state.replayStatus = 'running';
+  setPanelMode('replaying');
+  updateReplayStatusBar('running', null, null);
+});
+
+// ── Force-fix progress ────────────────────────────────────────────────────────
+function onForceFixProgress(payload) {
+  const { stage, status, repaired, locator, explanation } = payload;
+  const progressMap = { 1: 25, 2: 50, 3: 75, 4: 100 };
+  $('cascade-progress').style.width = progressMap[stage] + '%';
+
+  const ico = $(`s${stage}-ico`);
+  const res = $(`s${stage}-res`);
+  if (ico) {
+    ico.className = `stage-ico ${status === 'running' ? 'running' : status === 'pass' ? 'pass' : 'fail'}`;
+    ico.innerHTML = status === 'running' ? '<span class="spinner"></span>' : status === 'pass' ? '✓' : '✗';
+  }
+  if (res) {
+    if (status === 'pass' && locator) { res.className = 'stage-result pass'; res.textContent = locator.slice(0, 30); }
+    else if (status === 'fail') { res.className = 'stage-result fail'; res.textContent = 'no match'; }
+  }
+
+  if (repaired) {
+    state.forceFixActive = false;
+    $('cascade-spinner').style.display = 'none';
+    $('cascade-title').textContent = `Fixed — confirm to resume`;
+    $('cascade-title').style.color = 'var(--success)';
+    const step = state.steps.find(s => s.stepId === state.failingStepId);
+    if (step && locator) { step.locator = locator; step._uiStatus = 'paused'; renderStepList(); }
+    // Always show the confirm box so user can Apply & Resume
+    const lb = $('llm-result-box');
+    lb.classList.add('show');
+    $('llm-result-label').textContent = `Found working locator (stage ${stage})`;
+    $('llm-result-txt').textContent = explanation || 'A working locator was found. Apply it and resume replay.';
+    if (locator) {
+      $('llm-selector-display').textContent = locator;
+      $('llm-selector-display').style.display = 'block';
+    }
+    $('accept-repair-btn').textContent = 'Apply & Resume';
+  }
+
+  if (stage === 4 && explanation) {
+    const lb = $('llm-result-box');
+    lb.classList.add('show');
+    $('llm-result-txt').textContent = explanation;
+    if (locator) {
+      $('llm-selector-display').textContent = locator;
+      $('llm-selector-display').style.display = 'block';
+    } else {
+      $('llm-selector-display').style.display = 'none';
+    }
+    $('cascade-spinner').style.display = 'none';
+    if (!repaired) $('cascade-title').textContent = 'Force-fix — LLM response';
+  }
+
+  if (stage === 4 && status === 'fail' && !explanation) {
+    $('cascade-spinner').style.display = 'none';
+    $('cascade-title').textContent = 'Force-fix exhausted — manual fix required';
+    $('cascade-title').style.color = 'var(--fg-3)';
+    state.forceFixActive = false;
+  }
+}
+
+$('accept-repair-btn').addEventListener('click', () => {
+  const locator = $('llm-selector-display').textContent;
+  if (!locator) return;
+  send({ type: 'accept_llm_repair', payload: { stepId: state.failingStepId, locator } });
+  $('llm-result-box').classList.remove('show');
+  $('cascade-wrap').classList.remove('show');
+  // Resume replay with the repaired locator
+  state.replayStatus = 'running';
+  send({ type: 'resume', payload: {} });
+  setPanelMode('replaying');
+  updateReplayStatusBar('running', null, null);
+});
+
+$('try-manual-btn').addEventListener('click', () => {
+  $('llm-result-box').classList.remove('show');
+  $('cascade-wrap').classList.remove('show');
+  $('fix-editor').classList.add('show');
+  state.forceFixActive = false;
+});
+
+function resetCascadeStages() {
+  [1,2,3,4].forEach(i => {
+    const ico = $(`s${i}-ico`); const res = $(`s${i}-res`);
+    if (ico) { ico.className = 'stage-ico pending'; ico.innerHTML = '—'; }
+    if (res) { res.className = 'stage-result'; res.textContent = ''; }
+  });
+  $('cascade-title').style.color = '';
+}
+
+// ── Save / Load ───────────────────────────────────────────────────────────────
+$('version-select').addEventListener('change', () => {
+  const name = $('version-select').value;
+  if (!name) return;
+  send({ type: 'load_version', payload: { name } });
+  if (name === 'main') {
+    $('version-banner').classList.remove('show');
+    $('delete-version-btn').style.display = 'none';
+    state.activeVersion = 'main';
+  } else {
+    $('version-banner-name').textContent = name;
+    $('version-banner').classList.add('show');
+    $('delete-version-btn').style.display = '';
+    state.activeVersion = name;
+  }
+});
+
+$('switch-to-main').addEventListener('click', () => {
+  $('version-select').value = 'main';
+  $('version-banner').classList.remove('show');
+  $('delete-version-btn').style.display = 'none';
+  state.activeVersion = 'main';
+  send({ type: 'load_version', payload: { name: 'main' } });
+});
+
+$('save-version-btn').addEventListener('click', () => {
+  if (!state.steps.length) return;
+  const panel = $('save-version-panel');
+  state.savingVersion = !state.savingVersion;
+  if (state.savingVersion) {
+    $('save-step-count').textContent = state.steps.length;
+    // Pre-fill with active version name if editing an existing one
+    $('version-name-input').value = state.activeVersion !== 'main' ? state.activeVersion : '';
+    panel.classList.add('show');
+    $('version-name-input').focus();
+  } else {
+    panel.classList.remove('show');
+  }
+});
+
+$('cancel-save-version-btn').addEventListener('click', () => {
+  $('save-version-panel').classList.remove('show');
+  state.savingVersion = false;
+});
+
+$('confirm-save-version-btn').addEventListener('click', () => {
+  const name = $('version-name-input').value.trim();
+  if (!name) { $('version-name-input').focus(); return; }
+  const ids = state.steps.map(s => s.stepId);
+  if (!ids.length) return;
+  send({ type: 'save_version', payload: { name, stepIds: ids } });
+  $('save-version-panel').classList.remove('show');
+  state.savingVersion = false;
+  state.activeVersion = name;
+});
+
+$('delete-version-btn').addEventListener('click', () => {
+  const name = state.activeVersion;
+  if (!name || name === 'main') return;
+  if (!confirm(`Delete saved recording "${name}"?`)) return;
+  send({ type: 'delete_version', payload: { name } });
+  state.activeVersion = 'main';
+  $('version-banner').classList.remove('show');
+  $('delete-version-btn').style.display = 'none';
+});
+
+function onVersionsResponse(payload) {
+  const { versions } = payload;
+  if (!versions) return;
+  state.versions = versions;
+  const sel = $('version-select');
+  const prev = sel.value;
+  sel.innerHTML = '';
+
+  // "— unsaved —" placeholder for main
+  const mainOpt = document.createElement('option');
+  mainOpt.value = 'main';
+  mainOpt.textContent = state.steps.length ? `current (${state.steps.length} steps)` : '— unsaved —';
+  sel.appendChild(mainOpt);
+
+  versions.filter(v => v.name !== 'main').forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v.name;
+    opt.textContent = `${v.name}  (${v.stepCount} steps)`;
+    sel.appendChild(opt);
+  });
+
+  // Restore selection
+  if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
+  else sel.value = 'main';
+}
+
+function onVersionLoaded(payload) {
+  if (!payload) return;
+  if (Array.isArray(payload.steps)) {
+    state.steps = payload.steps.map(s => ({ ...s, _uiStatus: s._uiStatus || 'pending' }));
+    renderStepList();
+    updateReplayControls();
+  }
+  if (payload.name && payload.name !== 'main') {
+    $('version-banner-name').textContent = payload.name;
+    $('version-banner').classList.add('show');
+  } else {
+    $('version-banner').classList.remove('show');
+  }
+}
+
+// ── LLM mode pill toggle ──────────────────────────────────────────────────────
+$('llm-mode-pill').addEventListener('click', () => {
+  if (!state.llmAvailable) {
+    // Open settings
+    openSettings();
+    return;
+  }
+  state.llmEnabled = !state.llmEnabled;
+  send({ type: 'set_llm_mode', payload: { enabled: state.llmEnabled } });
+  updateLlmBanner();
+});
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+$('settings-btn').addEventListener('click', openSettings);
+$('llm-banner-action').addEventListener('click', openSettings);
+
+function openSettings() {
+  const s = $('settings-section');
+  state.settingsOpen = !state.settingsOpen;
+  s.classList.toggle('show', state.settingsOpen);
+}
+
+$('settings-provider').addEventListener('change', () => {
+  const v = $('settings-provider').value;
+  $('settings-base-url-row').style.display = v === 'openai_compatible' ? 'flex' : 'none';
+});
+
+$('save-llm-config-btn').addEventListener('click', () => {
+  const vr = $('llm-verify-result');
+  if (vr) { vr.textContent = 'Saving and testing connection…'; vr.className = 'llm-verify-result checking'; vr.style.display = 'block'; }
+  state.llmVerified = null;
+  state.llmVerifyMsg = 'Checking connection…';
+  send({ type: 'set_llm_config', payload: {
+    provider: $('settings-provider').value,
+    apiKey: $('settings-api-key').value.trim(),
+    model: $('settings-model').value.trim(),
+    apiBase: $('settings-base-url').value.trim(),
+  }});
+});
+
+// ── Collapse / expand ─────────────────────────────────────────────────────────
+$('collapse-btn').addEventListener('click', () => {
+  root.classList.add('collapsed');
+  notifyParentResize(18);
+});
+$('collapsed-tab').addEventListener('click', () => {
+  root.classList.remove('collapsed');
+  notifyParentResize(root.offsetWidth || 380);
+});
+
+function notifyParentResize(width) {
+  try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'panel_resize', width }, '*'); } catch(_) {}
+}
+
+// ── Resize handle ─────────────────────────────────────────────────────────────
+let resizing = false, resizeStartX = 0, resizeStartW = 380;
+$('resize-handle').addEventListener('mousedown', e => {
+  resizing = true; resizeStartX = e.clientX; resizeStartW = root.offsetWidth;
+  document.addEventListener('mousemove', onResize);
+  document.addEventListener('mouseup', stopResize);
+  e.preventDefault();
+});
+function onResize(e) {
+  if (!resizing) return;
+  const newW = Math.min(600, Math.max(280, resizeStartW - (e.clientX - resizeStartX)));
+  root.style.width = newW + 'px';
+  notifyParentResize(newW);
+}
+function stopResize() {
+  resizing = false;
+  document.removeEventListener('mousemove', onResize);
+  document.removeEventListener('mouseup', stopResize);
+}
+
+// ── Status bar ────────────────────────────────────────────────────────────────
+function updateStatusBar() {
+  // connected state handled by llm banner + step count
+}
+
+// ── Workflow step clicks ──────────────────────────────────────────────────────
+document.querySelectorAll('.pw-wf-step').forEach(el => {
+  el.addEventListener('click', () => setWorkflowStage(el.dataset.stage));
+});
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function truncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.slice(0, len) + '…' : str;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+updateParamInputs();
+setPanelMode('edit');
+updateLlmBanner();
+setWorkflowStage('record');
+connectWs();
+
+})();
+</script>
+</body>
+</html>
