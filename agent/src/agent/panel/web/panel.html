@@ -1129,7 +1129,7 @@ html, body {
             <div class="stage-row"><div class="stage-ico pending" id="s4-ico">—</div><span class="stage-lbl">Stage 4 — LLM last resort</span><span class="stage-result" id="s4-res"></span></div>
           </div>
           <div class="pw-llm-result" id="llm-result-box">
-            <div class="llm-result-label" id="llm-result-label">LLM Response</div>
+            <div class="llm-result-label">LLM Response</div>
             <div class="llm-result-txt" id="llm-result-txt"></div>
             <div class="llm-selector-display" id="llm-selector-display" style="display:none;"></div>
             <div class="llm-result-btns">
@@ -2327,10 +2327,6 @@ function onPause(payload) {
 function onRunCompleted() {
   state.replayStatus = 'idle';
   state.failingStepId = null;
-  state.forceFixActive = false;
-  state.proposedRepairLocator = null;
-  _stopCascadeTimer();
-  setRepairMode('none');
   updateReplayStatusBar('done', null, null);
   $('sb-last-run').textContent = 'Last run: all passed';
   $('sb-last-run').className = 'status-item ok';
@@ -2342,10 +2338,6 @@ function onRunCompleted() {
 function onRunAborted() {
   state.replayStatus = 'idle';
   state.failingStepId = null;
-  state.forceFixActive = false;
-  state.proposedRepairLocator = null;
-  _stopCascadeTimer();
-  setRepairMode('none');
   $('sb-last-run').textContent = 'Last run: stopped';
   $('sb-last-run').className = 'status-item warn';
 }
