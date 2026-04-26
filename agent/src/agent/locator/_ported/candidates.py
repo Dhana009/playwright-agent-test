@@ -255,7 +255,9 @@ def build_candidates(target: dict[str, Any]) -> list[PortedCandidate]:
         classes = [
             token
             for token in class_name.split()
-            if len(token) > 2 and token not in skip and not token.startswith("__rec")
+            if len(token) > 2 and token not in skip
+            and not token.startswith("__rec")
+            and not token.startswith("__agent")
         ]
         for cls in classes[:3]:
             out.append(

@@ -300,43 +300,70 @@ def _dom_diff_summary(before: str, after: str) -> dict[str, Any]:
 
 # ── DOM capture (for LLM context) ────────────────────────────────────────────
 
-async def capture_focused_dom(page: Page, locator: str) -> str:
-    """Capture real DOM around the target element. Returns cleaned outerHTML up to 3000 chars."""
-    try:
-        snippet = await page.evaluate("""(selector) => {
-            function clean(el, maxLen) {
-                if (!el) return '';
-                const c = el.cloneNode(true);
-                c.querySelectorAll('script,style,noscript,svg,img').forEach(n => n.remove());
-                c.querySelectorAll('*').forEach(n => {
-                    const cls = n.getAttribute('class');
-                    if (cls && cls.length > 60) n.setAttribute('class', cls.slice(0, 60) + '…');
-                    const sty = n.getAttribute('style');
-                    if (sty && sty.length > 60) n.setAttribute('style', '…');
-                    ['nitro-lazy-src','nitro-lazy-empty','data-nitro-empty-id','decoding','loading','src'].forEach(a => {
-                        const v = n.getAttribute(a);
-                        if (v && v.length > 40) n.removeAttribute(a);
-                    });
-                });
-                return c.outerHTML.slice(0, maxLen);
-            }
-            try {
-                let el = null;
-                try { el = document.querySelector(selector); } catch(_) {}
-                if (!el) return `(selector "${selector}" not found in DOM)`;
-                const elHtml = clean(el, 2000);
-                const parent = el.parentElement;
-                if (parent && parent.tagName !== 'BODY' && parent.tagName !== 'HTML') {
-                    const parentHtml = clean(parent, 3000);
-                    if (parentHtml.length < 3000) return parentHtml;
+async def capture_focused_dom(page: Page, locator: str, *, action: str = "") -> str:
+    """Capture real DOM around the target element. Returns cleaned outerHTML up to 3000 chars.
+
+    If the locator is broken/missing, falls back to a semantic scan of the page
+    for elements relevant to the action type so the LLM always has real DOM.
+    """
+    _CAPTURE_JS = """([selector, actionHint]) => {
+        function clean(el, maxLen) {
+            if (!el) return '';
+            const c = el.cloneNode(true);
+            c.querySelectorAll('script,style,noscript,svg,img').forEach(n => n.remove());
+            c.querySelectorAll('*').forEach(n => {
+                // Strip agent-injected classes so LLM doesn't see them
+                const cls = n.getAttribute('class');
+                if (cls) {
+                    const cleaned = cls.split(' ').filter(t => !t.startsWith('__agent')).join(' ').trim();
+                    if (cleaned) n.setAttribute('class', cleaned.slice(0, 60));
+                    else n.removeAttribute('class');
                 }
-                return elHtml;
-            } catch(e) { return 'DOM capture error: ' + String(e); }
-        }""", locator)
+                const sty = n.getAttribute('style');
+                if (sty && sty.length > 60) n.setAttribute('style', '…');
+                ['nitro-lazy-src','nitro-lazy-empty','data-nitro-empty-id','decoding','loading','src'].forEach(a => {
+                    const v = n.getAttribute(a);
+                    if (v && v.length > 40) n.removeAttribute(a);
+                });
+            });
+            return c.outerHTML.slice(0, maxLen);
+        }
+        function semanticFallback(hint) {
+            // Return relevant elements from the page based on action type
+            const selMap = {
+                select: 'select, [role="combobox"], [role="listbox"]',
+                fill: 'input:not([type=hidden]):not([type=file]), textarea',
+                type: 'input:not([type=hidden]):not([type=file]), textarea',
+                click: 'button, a, [role="button"], [role="link"]',
+                check: 'input[type=checkbox], [role="checkbox"]',
+                uncheck: 'input[type=checkbox], [role="checkbox"]',
+                hover: '*[title], button, a',
+                focus: 'input, select, textarea, button, a',
+            };
+            const sel = selMap[hint] || 'input, select, textarea, button';
+            const els = [...document.querySelectorAll(sel)].slice(0, 8);
+            if (!els.length) return '(no matching elements found for action: ' + hint + ')';
+            return '<semantic-fallback action="' + hint + '">\n' +
+                els.map(e => clean(e.closest('label,fieldset,form') || e.parentElement || e, 800)).join('\n') +
+                '\n</semantic-fallback>';
+        }
+        try {
+            let el = null;
+            try { el = document.querySelector(selector); } catch(_) {}
+            if (!el) return semanticFallback(actionHint);
+            const elHtml = clean(el, 2000);
+            const parent = el.parentElement;
+            if (parent && parent.tagName !== 'BODY' && parent.tagName !== 'HTML') {
+                const parentHtml = clean(parent, 3000);
+                if (parentHtml.length < 3000) return parentHtml;
+            }
+            return elHtml;
+        } catch(e) { return 'DOM capture error: ' + String(e); }
+    }"""
+    try:
+        snippet = await page.evaluate(_CAPTURE_JS, [locator, action])
         result = str(snippet or "").strip()
-        if result and not result.startswith("(") and not result.startswith("DOM capture error"):
-            return result[:3000]
-        return result or "(DOM unavailable)"
+        return result[:3000] if result else "(DOM unavailable)"
     except Exception as exc:
         return f"(DOM capture failed: {exc})"
 
@@ -415,7 +442,7 @@ async def run_llm_assist_iteration(
         return None
 
     focused_dom, frameworks, screenshot_b64 = await asyncio.gather(
-        capture_focused_dom(page, dom_anchor),
+        capture_focused_dom(page, dom_anchor, action=action),
         detect_frameworks(page),
         capture_screenshot_b64(page) if _supports_vision(llm_provider) else _no_screenshot(),
     )
@@ -485,10 +512,26 @@ STEP 4 — If DOM unchanged after set_input_files → the hidden input is not wi
 
     non_upload_knowledge = ""
     if action not in ("upload", "upload_file"):
-        non_upload_knowledge = """
-━━━ AVAILABLE STRATEGIES ━━━
-  "locator_fix" — target a different element, re-run the same action
-  "js_execute"  — write and run custom JS in the page (write the complete code body)
+        # Build an action-aware strategy block so the LLM knows exactly what it can do
+        _action_strategy_map: dict[str, str] = {
+            "select":  '"select_option" — call select_option(value) on the <select> element\n  "js_execute"   — custom JS if it is a custom/ARIA dropdown (click trigger, then click option)\n  "locator_fix"  — try a different locator for the same action',
+            "click":   '"locator_fix"  — target a different element and click it\n  "js_execute"   — custom JS (e.g. el.click(), dispatch events)\n  "select_option"— if this is actually a <select> disguised as a button',
+            "fill":    '"locator_fix"  — target a different input element and fill it\n  "js_execute"   — set value + dispatch input/change events for framework inputs',
+            "type":    '"locator_fix"  — target a different input and type into it\n  "js_execute"   — custom JS keydown/keyup simulation if needed',
+            "check":   '"locator_fix"  — target the checkbox/label and check it\n  "js_execute"   — el.checked = true + dispatch change event',
+            "uncheck": '"locator_fix"  — target the checkbox/label and uncheck it\n  "js_execute"   — el.checked = false + dispatch change event',
+            "hover":   '"locator_fix"  — target a different element and hover\n  "js_execute"   — dispatch mouseover/mouseenter events',
+            "focus":   '"locator_fix"  — target a different focusable element\n  "js_execute"   — el.focus() directly',
+        }
+        action_key = action.replace("-", "_").lower()
+        strategies = _action_strategy_map.get(action_key, '"locator_fix"  — target a different element, re-run the same action\n  "js_execute"   — custom JS in the page')
+        non_upload_knowledge = f"""
+━━━ AVAILABLE STRATEGIES for action "{action}" ━━━
+  {strategies}
+
+IMPORTANT for "select_option": set strategy="select_option", locator=<the <select> or [role="combobox"] CSS selector from DOM>, js_code=null. The system uses the original step's value/text param automatically.
+IMPORTANT for "locator_fix": the system re-runs the original action ("{action}") with the new locator.
+IMPORTANT for "js_execute": write complete JS body. No imports. Use document.querySelector to find elements. throw new Error("reason") on failure.
 """
 
     vision_note = ""
@@ -533,7 +576,7 @@ Return ONLY valid JSON, exactly this shape:
   "diagnosis": "<one sentence: root cause of the failure>",
   "attempts": [
     {{
-      "strategy": "<file_chooser_click|set_input_files|dispatch_events|js_execute|locator_fix>",
+      "strategy": "<select_option|locator_fix|js_execute|file_chooser_click|set_input_files|dispatch_events>",
       "locator": "<exact CSS selector or XPath from the DOM above>",
       "js_code": "<complete JS code body — only for js_execute, null otherwise>",
       "rationale": "<one line: why this specific attempt should work>"
@@ -766,22 +809,39 @@ async def _run_strategy(
             "upload_method": "js_execute",
         }
 
+    if strategy == "select_option":
+        value = params.get("url") or params.get("text") or params.get("value") or ""
+        await tool_runtime.select(tab_id=tab_id, target=locator, value=value, timeout_ms=timeout_ms)
+        return {"success": True, "error": None, "exec_detail": f"select_option {value!r} on {locator!r}", "upload_method": ""}
+
     if strategy == "locator_fix":
-        if action in ("upload", "upload_file"):
+        t = action.replace("-", "_").lower()
+        if t in ("upload", "upload_file"):
             normalized = str(Path(unquote(file_path)).expanduser()) if file_path else file_path
             result = await tool_runtime.upload(
                 tab_id=tab_id, target=locator, file_paths=normalized, timeout_ms=timeout_ms,
             )
             method = (result.details or {}).get("uploadMethod", "") if result else ""
             return {"success": True, "error": None, "exec_detail": f"locator_fix upload: {locator!r}", "upload_method": method}
-        elif action == "click":
+        elif t == "click":
             await tool_runtime.click(tab_id=tab_id, target=locator, timeout_ms=timeout_ms)
-        elif action == "fill":
+        elif t == "fill":
             text = params.get("text") or params.get("value") or ""
             await tool_runtime.fill(tab_id=tab_id, target=locator, text=text, timeout_ms=timeout_ms)
-        elif action == "type":
+        elif t == "type":
             text = params.get("text") or params.get("value") or ""
             await tool_runtime.type(tab_id=tab_id, target=locator, text=text, timeout_ms=timeout_ms)
+        elif t == "select":
+            value = params.get("url") or params.get("text") or params.get("value") or ""
+            await tool_runtime.select(tab_id=tab_id, target=locator, value=value, timeout_ms=timeout_ms)
+        elif t in ("check", "assert_checked"):
+            await tool_runtime.check(tab_id=tab_id, target=locator, timeout_ms=timeout_ms)
+        elif t == "uncheck":
+            await tool_runtime.uncheck(tab_id=tab_id, target=locator, timeout_ms=timeout_ms)
+        elif t == "hover":
+            await tool_runtime.hover(tab_id=tab_id, target=locator, timeout_ms=timeout_ms)
+        elif t == "focus":
+            await tool_runtime.focus(tab_id=tab_id, target=locator, timeout_ms=timeout_ms)
         else:
             await tool_runtime.click(tab_id=tab_id, target=locator, timeout_ms=timeout_ms)
         return {"success": True, "error": None, "exec_detail": f"locator_fix {action}: {locator!r}", "upload_method": ""}

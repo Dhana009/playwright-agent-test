@@ -1237,7 +1237,7 @@ html, body {
                 <option value="assert-title">assert-title</option>
               </optgroup>
               <optgroup label="Page-level (no element needed)">
-                <option value="navigate">navigate</option>
+                <option value="navigate">goto (navigate to URL)</option>
                 <option value="navigate-back">navigate-back</option>
                 <option value="wait-for">wait-for</option>
                 <option value="wait-timeout">wait-timeout</option>
@@ -1287,8 +1287,8 @@ html, body {
         <div class="pw-section" id="validate-section">
           <div class="pw-section-title">
             <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M3 2l7 4-7 4V2z"/></svg>
-            <span>Step 3 — Validate &amp; Add</span>
-            <span class="pw-help">?<span class="pw-help-tip">Validate to test the action on the live page. If it passes, click Add Step to save it.</span></span>
+            <span>Step 3 — Add / Validate</span>
+            <span class="pw-help">?<span class="pw-help-tip">For page-level actions (goto, wait, dialog…) click Add Step directly. For element actions, validate first to confirm the locator works, then Add Step.</span></span>
           </div>
           <div class="pw-row">
             <button class="pw-btn" id="validate-btn" style="flex:1;">
@@ -1830,7 +1830,7 @@ function connectWs() {
     handleMessage(msg);
   };
 }
-function scheduleReconnect() { setTimeout(connectWs, 2000); }
+function scheduleReconnect() { setTimeout(connectWs, 500); }
 function send(msg) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
   state.ws.send(JSON.stringify(msg));
@@ -2428,16 +2428,18 @@ $('action-select').addEventListener('change', () => {
   state.userPickedAction = true;
   updateParamInputs();
   resetValidate();
-  // When switching to a page-level action, dim the pick section; restore otherwise
   const action = $('action-select').value;
   if (PAGE_LEVEL_ACTIONS.has(action)) {
     $('pick-section').style.opacity = '0.5';
     $('pick-status').textContent = 'No element needed for this action.';
     $('pick-status').className = 'pick-status';
+    // Page-level actions can be added directly — no validate required
+    $('add-step-btn').style.display = 'flex';
   } else if (!state.pickedLocator) {
     $('pick-section').style.opacity = '';
     $('pick-status').textContent = 'Pick an element, or choose a page-level action above.';
     $('pick-status').className = 'pick-status';
+    $('add-step-btn').style.display = 'none';
   }
 });
 
@@ -2455,15 +2457,21 @@ function updateParamInputs() {
   const existingValue = existingInput ? existingInput.value : '';
   const existingTimeout = document.getElementById('action-timeout') ? document.getElementById('action-timeout').value : '';
 
-  const textActions = ['fill','type','assert-text','assert-title','assert-url','assert-value','navigate','press'];
+  const textActions = ['fill','type','assert-text','assert-title','assert-url','assert-value','navigate','press','select'];
   const numActions = ['wait-timeout'];
   const stateActions = ['wait-for'];
   const dialogActions = ['dialog-handle'];
   const fileActions = ['upload'];
   let html = '';
   if (textActions.includes(action)) {
-    const ph = { fill:'Text to fill…', type:'Text to type…', 'assert-text':'Expected text…', 'assert-title':'Expected title…', 'assert-url':'Expected URL…', 'assert-value':'Expected value…', navigate:'https://…', press:'Enter / Tab / …' }[action] || 'Value…';
-    html = `<input type="text" class="pw-input" id="action-param" placeholder="${ph}" style="width:100%"/>`;
+    const ph = { fill:'Text to fill…', type:'Text to type…', 'assert-text':'Expected text…', 'assert-title':'Expected title…', 'assert-url':'Expected URL…', 'assert-value':'Expected value…', navigate:'Go to URL — e.g. https://example.com', press:'Enter / Tab / …', select:'Option value or visible text (e.g. "Canada" or "CA")' }[action] || 'Value…';
+    let extra = action === 'select' ? ' style="width:100%;border-color:var(--accent);"' : ' style="width:100%"';
+    html = `<input type="text" class="pw-input" id="action-param" placeholder="${ph}"${extra}/>`;
+    if (action === 'select') {
+      html += `<div style="font-size:10px;color:var(--fg-3);margin-top:4px;">For native &lt;select&gt; dropdowns. Type the option's visible text or value attribute.</div>`;
+    }
+  } else if (action === 'focus') {
+    html = `<div style="font-size:10px;color:var(--fg-3);background:var(--bg-1);border-radius:4px;padding:5px 8px;">Focuses the picked element — no value needed. Pick the element above, then validate or add.</div>`;
   } else if (numActions.includes(action)) {
     html = `<input type="number" class="pw-input" id="action-param" placeholder="Timeout ms (default 5000)" style="width:100%"/>`;
   } else if (stateActions.includes(action)) {
@@ -2514,10 +2522,16 @@ function updateParamInputs() {
   pi.innerHTML = html;
   pi.style.display = html ? 'block' : 'none';
 
-  // Restore the user's typed value after the input is re-created
-  if (existingValue) {
+  // Restore the user's typed value after the input is re-created,
+  // but never carry over a previous action's value into the URL field.
+  if (existingValue && action !== 'navigate') {
     const newInput = document.getElementById('action-param');
     if (newInput && newInput.tagName === 'INPUT') newInput.value = existingValue;
+  }
+  // Auto-focus the URL input when navigate is selected
+  if (action === 'navigate') {
+    const newInput = document.getElementById('action-param');
+    if (newInput) setTimeout(() => newInput.focus(), 0);
   }
   if (existingTimeout) {
     const tInput = document.getElementById('action-timeout');
@@ -2544,8 +2558,12 @@ function getActionParams() {
     const pattern = p ? p.value.trim() : '';
     params = { urlPattern: pattern, text: pattern };
   } else if (p) {
-    const val = p.value.trim();
-    if (action === 'upload') {
+    let val = p.value.trim();
+    if (action === 'navigate') {
+      // Auto-prepend https:// if no scheme given
+      if (val && !val.match(/^[a-z][a-z0-9+\-.]*:\/\//i)) val = 'https://' + val;
+      params = { url: val, text: val, value: val };
+    } else if (action === 'upload') {
       params = { file_paths: val, text: val, value: val };
     } else {
       params = { text: val, value: val };
@@ -2685,11 +2703,14 @@ function onValidateResult(payload) {
     $('validate-icon').textContent = '✓';
     $('validate-text').textContent = 'Passed';
     $('add-step-btn').style.display = 'flex';
+    $('add-step-btn').title = 'Add Step';
   } else {
     vr.className = 'pw-validate-result show fail';
     $('validate-icon').textContent = '✗';
     $('validate-text').textContent = error || 'Failed';
-    $('add-step-btn').style.display = 'none';
+    // Still show Add Step — user can add a failing step and use LLM to fix it
+    $('add-step-btn').style.display = 'flex';
+    $('add-step-btn').title = 'Add step anyway — use LLM Assist to fix it during replay';
   }
 }
 
@@ -2707,6 +2728,17 @@ $('add-step-btn').addEventListener('click', () => {
   const action = $('action-select').value;
   const locator = state.pickedLocator;
   const params = getActionParams();
+
+  // For navigate, require a URL
+  if (action === 'navigate') {
+    const url = (params.url || params.text || '').trim();
+    if (!url) {
+      const inp = document.getElementById('action-param');
+      if (inp) { inp.style.borderColor = 'var(--danger)'; inp.focus(); }
+      return;
+    }
+  }
+
   send({ type: 'append_step', payload: { action, locator, params, insertAfterStepId: state.insertAfterStepId } });
   state.insertAfterStepId = null;
   state.pickedLocator = null;
@@ -2720,13 +2752,17 @@ $('add-step-btn').addEventListener('click', () => {
 });
 
 $('add-page-action-btn').addEventListener('click', () => {
-  // Page-level actions don't need an element — skip pick step, go straight to validate
   state.pickedLocator = null;
   $('pick-status').textContent = 'Page action — no element required.';
   $('candidates-container').style.display = 'none';
   $('pick-section').style.opacity = '0.5';
   resetValidate();
   updateParamInputs();
+  // Show Add Step immediately — page-level actions don't need validate first
+  const action = $('action-select').value;
+  if (PAGE_LEVEL_ACTIONS.has(action)) {
+    $('add-step-btn').style.display = 'flex';
+  }
 });
 
 // ── Step list rendering ───────────────────────────────────────────────────────
@@ -2815,7 +2851,7 @@ function renderStepList() {
         <div class="step-head">
           <span class="action-badge ${badge.cls}">${escHtml(badge.label)}</span>
           ${tabBadgeHtml}
-          <span class="step-label">${escHtml(step.action || '')}${step.params && step.params.text ? ' · "' + escHtml(String(step.params.text).slice(0, 28)) + '"' : ''}</span>
+          <span class="step-label">${escHtml(step.action || '')}${(() => { const p = step.params || {}; const lbl = step.action === 'navigate' ? (p.url || p.text || '') : (p.text || ''); return lbl ? (step.action === 'navigate' ? ' · ' + escHtml(String(lbl).slice(0, 40)) : ' · "' + escHtml(String(lbl).slice(0, 28)) + '"') : ''; })()}</span>
         </div>
         ${locShort ? `<div class="step-selector">${escHtml(locShort)}</div>` : ''}
         ${step._error ? `<div class="step-error">${escHtml(step._error)}</div>` : ''}
@@ -2878,7 +2914,8 @@ function statusIconHtml(status) {
 function inferBadge(action) {
   if (!action) return { cls: 'action', label: 'action' };
   if (action.startsWith('assert')) return { cls: 'assert', label: 'assert' };
-  if (action === 'navigate' || action === 'navigate_back' || action === 'navigate-back') return { cls: 'nav', label: 'nav' };
+  if (action === 'navigate') return { cls: 'nav', label: 'goto' };
+  if (action === 'navigate_back' || action === 'navigate-back') return { cls: 'nav', label: 'back' };
   if (action.startsWith('wait')) return { cls: 'wait', label: 'wait' };
   const a = action.replace(/-/g,'_');
   if (['expect_new_tab','switch_tab','close_tab'].includes(a)) return { cls: 'tab', label: 'tab' };

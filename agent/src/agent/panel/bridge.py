@@ -342,16 +342,16 @@ class PanelBridge:
         await self._page.add_init_script(inject_js)
         await self._page.add_init_script(pick_helper_js)
 
-        # Also re-evaluate after each main-frame navigation finishes loading
-        async def _on_navigated(frame: Any) -> None:
-            if frame == self._page.main_frame:
-                try:
-                    await self._page.evaluate(inject_js)
-                    await self._page.evaluate(pick_helper_js)
-                except Exception:
-                    pass
+        # Re-inject after each main-frame navigation completes (page fully loaded).
+        # Using "load" event instead of "framenavigated" so the DOM is ready when we inject.
+        async def _on_load() -> None:
+            try:
+                await self._page.evaluate(inject_js)
+                await self._page.evaluate(pick_helper_js)
+            except Exception:
+                pass
 
-        self._page.on("framenavigated", _on_navigated)
+        self._page.on("load", _on_load)
 
         # Inject into current page right now
         try:
@@ -401,6 +401,12 @@ class PanelBridge:
 
   function collectTarget(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+    // If user clicked an <option> or <optgroup>, target the parent <select> instead
+    if (node.tagName === 'OPTION' || node.tagName === 'OPTGROUP') {
+      let p = node.parentElement;
+      while (p && p.tagName !== 'SELECT') p = p.parentElement;
+      if (p) node = p;
+    }
     const text = (node.innerText || node.textContent || '').trim().slice(0, 120);
     const testid = node.getAttribute('data-testid') || node.getAttribute('data-test-id') || node.getAttribute('data-qa') || '';
     return {
