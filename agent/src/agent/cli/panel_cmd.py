@@ -31,12 +31,12 @@ from agent.panel.bridge import (
     MSG_LLM_ASSIST,
     MSG_LLM_BUILD_STEP,
     MSG_INSERT_BUILT_STEP,
-    MSG_LLM_BUILD_RESULT,
     MSG_PAUSE_REQUEST,
     MSG_PICK_CANCEL,
     MSG_PICK_START,
     MSG_REPLAY,
     MSG_RESUME,
+    MSG_SAVE_CODEGEN_FILE,
     MSG_RUNS_DIR_CHANGED,
     MSG_SAVE_TO_FILE,
     MSG_SAVE_VERSION,
@@ -221,6 +221,7 @@ async def _run_panel(
     bridge.on(MSG_INSERT_BUILT_STEP, state.handle_insert_built_step)
     bridge.on("set_llm_config", state.handle_set_llm_config)
     bridge.on(MSG_GET_CODE, state.handle_get_code)
+    bridge.on(MSG_SAVE_CODEGEN_FILE, state.handle_save_codegen_file)
     bridge.on(MSG_CHOOSE_RUNS_DIR, state.handle_choose_runs_dir)
     bridge.on(MSG_SAVE_TO_FILE, state.handle_save_to_file)
     bridge.on(MSG_LOAD_FROM_FILE, state.handle_load_from_file)
@@ -1098,7 +1099,7 @@ class _PanelState:
 Every attempt listed in EXECUTION HISTORY below has already been tried and FAILED on the real page.
 
 Locators already tried (ALL FAILED — do NOT repeat):
-{chr(10).join(f"  ✗ {l}" for l in tried_locators) or "  (none recorded)"}
+{chr(10).join(f"  ✗ {locator}" for locator in tried_locators) or "  (none recorded)"}
 
 Strategies already tried: {', '.join(tried_strategies) or '(none)'}
 
@@ -2053,12 +2054,101 @@ HARD RULES:
     async def handle_get_code(self, _msg: dict[str, Any]) -> None:
         """Build Playwright TypeScript from the current step graph; reply with code_result."""
         try:
-            from agent.export._ported.codegen import build_playwright_test_source
-            code = build_playwright_test_source(self.step_graph)
-            await self.bridge.send({"type": MSG_CODE_RESULT, "payload": {"code": code}})
+            import base64
+            import io
+            import zipfile
+            from agent.export._ported.codegen import build_playwright_codegen_artifacts
+
+            artifacts = build_playwright_codegen_artifacts(self.step_graph)
+            preview_code = str(artifacts.get("preview_code") or "")
+            package_files = artifacts.get("package_files") or {}
+
+            payload: dict[str, Any] = {
+                "code": preview_code,  # backward-compatible field used by current UI
+                "previewCode": preview_code,
+                "packageFiles": package_files,
+            }
+
+            if isinstance(package_files, dict) and package_files:
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for rel_path, content in package_files.items():
+                        zf.writestr(str(rel_path), str(content))
+                payload["packageFilename"] = "playwright-pom-package.zip"
+                payload["packageZipBase64"] = base64.b64encode(zip_buffer.getvalue()).decode("ascii")
+
+            await self.bridge.send({"type": MSG_CODE_RESULT, "payload": payload})
         except Exception as exc:
             logger.error("get_code_error error=%s", str(exc))
             await self.bridge.send({"type": MSG_CODE_RESULT, "payload": {"error": str(exc)}})
+
+    async def handle_save_codegen_file(self, msg: dict[str, Any]) -> None:
+        """Open native Save As and write generated code artifacts to the selected local path."""
+        try:
+            import io
+            import zipfile
+            from agent.export._ported.codegen import build_playwright_codegen_artifacts
+
+            payload = msg.get("payload", {}) if isinstance(msg, dict) else {}
+            kind = str(payload.get("kind") or "").strip().lower()
+            if kind not in {"preview_ts", "pom_zip"}:
+                raise ValueError(f"Unsupported code save kind: {kind or '(empty)'}")
+
+            artifacts = build_playwright_codegen_artifacts(self.step_graph)
+            preview_code = str(artifacts.get("preview_code") or "")
+            package_files = artifacts.get("package_files") or {}
+
+            if kind == "preview_ts":
+                default_name = "playwright-test.ts"
+                selected = await self._pick_save_file(
+                    prompt="Save generated Playwright test as:",
+                    default_name=default_name,
+                )
+                if not selected:
+                    await self.bridge.send({
+                        "type": "notify",
+                        "payload": {"level": "info", "message": "Save cancelled."},
+                    })
+                    return
+                path = selected if selected.suffix else selected.with_suffix(".ts")
+                data = preview_code.encode("utf-8")
+            else:
+                default_name = "playwright-pom-package.zip"
+                selected = await self._pick_save_file(
+                    prompt="Save generated POM package as:",
+                    default_name=default_name,
+                )
+                if not selected:
+                    await self.bridge.send({
+                        "type": "notify",
+                        "payload": {"level": "info", "message": "Save cancelled."},
+                    })
+                    return
+                path = selected if selected.suffix else selected.with_suffix(".zip")
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for rel_path, content in package_files.items():
+                        zf.writestr(str(rel_path), str(content))
+                data = zip_buffer.getvalue()
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+
+            await self.bridge.send({
+                "type": "code_file_saved",
+                "payload": {
+                    "kind": kind,
+                    "path": str(path),
+                    "filename": path.name,
+                    "bytes": len(data),
+                },
+            })
+        except Exception as exc:
+            logger.error("save_codegen_file_error error=%s", str(exc))
+            await self.bridge.send({
+                "type": "notify",
+                "payload": {"level": "error", "message": f"Code save failed: {exc}"},
+            })
 
     # ── Folder picker (macOS AppleScript only; other platforms no-op) ─────
 
@@ -2088,6 +2178,31 @@ HARD RULES:
         result = subprocess.run(
             ["osascript", "-e", f'POSIX path of (choose file with prompt "{prompt}")'],
             capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            return None
+        chosen = result.stdout.strip()
+        return Path(chosen) if chosen else None
+
+    async def _pick_save_file(self, prompt: str, default_name: str) -> "Path | None":
+        """Open a native Save As picker. Returns selected path or None if cancelled/unsupported."""
+        import subprocess
+        import sys
+        if sys.platform != "darwin":
+            logger.info("save_file_picker_unavailable platform=%s", sys.platform)
+            return None
+
+        safe_prompt = prompt.replace("\\", "\\\\").replace('"', '\\"')
+        safe_default = default_name.replace("\\", "\\\\").replace('"', '\\"')
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                f'POSIX path of (choose file name with prompt "{safe_prompt}" default name "{safe_default}")',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if result.returncode != 0:
             return None

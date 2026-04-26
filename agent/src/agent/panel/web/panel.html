@@ -1033,26 +1033,62 @@ html, body {
 .code-toolbar-title {
   font-size: 11px; font-weight: 600; color: var(--fg-1); flex: 1;
 }
+.code-download-status {
+  font-size: 10px;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  min-height: 14px;
+}
+.code-download-status.ok { color: var(--success); }
+.code-download-status.error { color: var(--danger); }
 #code-display {
   flex: 1;
   overflow: auto;
-  background: var(--bg-sunken);
-  border: 1px solid var(--border-2);
-  border-radius: 5px;
-  padding: 10px 12px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  line-height: 1.55;
-  color: var(--fg-1);
+  font-size: 11px;
+  line-height: 1.6;
+  color: #e6edf3;
   white-space: pre;
   tab-size: 2;
   min-height: 120px;
+  counter-reset: line;
 }
-#code-display .code-kw   { color: #ff7b72; }
-#code-display .code-str  { color: #a5d6ff; }
-#code-display .code-fn   { color: #d2a8ff; }
-#code-display .code-cmt  { color: var(--fg-3); font-style: italic; }
-#code-display .code-num  { color: #79c0ff; }
+/* line-number gutter + code column layout */
+#code-display .cl {
+  display: flex;
+  min-height: 1.6em;
+}
+#code-display .cl:hover { background: rgba(255,255,255,0.04); }
+#code-display .ln {
+  display: inline-block;
+  min-width: 36px;
+  padding: 0 10px 0 12px;
+  text-align: right;
+  color: #3d4450;
+  user-select: none;
+  flex-shrink: 0;
+  border-right: 1px solid #21262d;
+  margin-right: 14px;
+  font-size: 10px;
+  line-height: 1.6em;
+}
+#code-display .lc { flex: 1; padding-right: 16px; }
+
+/* VS Code dark+ token colors */
+#code-display .tk-kw   { color: #ff7b72; }           /* keywords: const, await, import … */
+#code-display .tk-type { color: #ffa657; }            /* types: Record, Page, Promise … */
+#code-display .tk-fn   { color: #d2a8ff; }            /* function/method calls */
+#code-display .tk-str  { color: #a5d6ff; }            /* strings */
+#code-display .tk-num  { color: #79c0ff; }            /* numbers */
+#code-display .tk-cmt  { color: #5c6b7a; font-style: italic; } /* comments */
+#code-display .tk-cmt .tk-tag  { color: #7a8fa6; font-weight: 600; font-style: normal; } /* Step N — */
+#code-display .tk-cmt .tk-key  { color: #6e9ab0; font-style: normal; }   /* page: / locator note: */
+#code-display .tk-cmt .tk-val  { color: #89b4cc; font-style: normal; }   /* url values, aria values */
+#code-display .tk-punct { color: #8b949e; }           /* braces, parens, colons */
+
 .code-empty {
   color: var(--fg-3); font-size: 11px; font-family: var(--font-sans);
   text-align: center; padding: 30px 0;
@@ -1749,7 +1785,12 @@ html, body {
           <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1v7M3 6l3 3 3-3M1 10h10"/></svg>
           .ts
         </button>
+        <button class="pw-btn" id="code-download-pom-btn" title="Download generated POM package (.zip)" style="height:24px;font-size:10px;">
+          <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h8M2 6h8M2 8h8"/><path d="M6 1v2"/></svg>
+          POM .zip
+        </button>
       </div>
+      <div id="code-download-status" class="code-download-status">No downloads triggered yet.</div>
       <div id="code-display"><div class="code-empty">Switch to the Code tab to generate TypeScript.<br>Click Refresh after making changes to steps.</div></div>
     </div>
 
@@ -2002,10 +2043,32 @@ function handleMessage(msg) {
     case 'llm_assist_result': onLlmAssistResult(payload); break;
     case 'llm_build_result': onLlmBuildResult(payload); break;
     case 'code_result': {
-      if (payload && payload.code) renderCode(payload.code);
-      else if (payload && payload.error) {
+      if (payload && payload.error) {
         const disp = $('code-display');
         if (disp) disp.innerHTML = `<div class="code-empty" style="color:var(--danger);">Error generating code: ${escHtml(payload.error)}</div>`;
+        _lastGeneratedPackage = null;
+        setCodeDownloadStatus(`Code generation failed: ${payload.error}`, 'error');
+      } else if (payload) {
+        const src = payload.previewCode || payload.code || '';
+        if (src) renderCode(src);
+        // Store package regardless of whether preview code is non-empty
+        _lastGeneratedPackage = {
+          zipBase64: payload.packageZipBase64 || '',
+          filename: payload.packageFilename || 'playwright-pom-package.zip',
+          files: payload.packageFiles || {},
+        };
+      }
+      break;
+    }
+    case 'code_file_saved': {
+      if (payload && payload.path) {
+        const bytes = Number(payload.bytes || 0);
+        const what = payload.kind === 'pom_zip' ? 'POM package' : 'TypeScript file';
+        setCodeDownloadStatus(
+          `${what} saved: ${payload.path} (${formatBytes(bytes)}) at ${timeNow()}.`,
+          'ok'
+        );
+        showToast(`Saved ${payload.filename || 'file'} to selected location.`);
       }
       break;
     }
@@ -4574,6 +4637,7 @@ function lbAddSystemMsg(txt) {
 
 // ── Code tab ──────────────────────────────────────────────────────────────────
 let _lastGeneratedCode = '';
+let _lastGeneratedPackage = null;
 
 function requestCode() {
   if (state.steps.length === 0) {
@@ -4590,15 +4654,104 @@ function renderCode(code) {
   _lastGeneratedCode = code;
   const disp = $('code-display');
   if (!disp) return;
-  // Simple syntax highlight
-  const escaped = code
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const highlighted = escaped
-    .replace(/(\/\/[^\n]*)/g, '<span class="code-cmt">$1</span>')
-    .replace(/\b(import|export|const|let|var|async|await|function|return|from|test|expect|true|false|null|undefined|if|else|for|of|in|new|throw|try|catch)\b/g, '<span class="code-kw">$1</span>')
-    .replace(/('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`)/g, '<span class="code-str">$1</span>')
-    .replace(/\b(\d+)\b/g, '<span class="code-num">$1</span>');
-  disp.innerHTML = highlighted;
+  if (!code || !code.trim()) {
+    disp.innerHTML = '<div class="code-empty">No code generated yet.</div>';
+    return;
+  }
+
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // Comment lines: escape first, then color Step/page/locator sub-parts
+  function highlightComment(raw) {
+    const e = esc(raw);
+    const styled = e
+      .replace(/(Step \d+ — [^|<\n]+)/g, m => `<span class="tk-tag">${m}</span>`)
+      .replace(/\b(page:|locator note:)/g, '<span class="tk-key">$1</span>')
+      .replace(/(<span class="tk-key">[^<]+<\/span>)([^<\n]+)/g,
+        (_, label, val) => `${label}<span class="tk-val">${val}</span>`);
+    return `<span class="tk-cmt">${styled}</span>`;
+  }
+
+  // Code lines: tokenize on RAW text first so string boundaries are exact,
+  // then escape + highlight each token independently — no HTML tag leakage.
+  function highlightCode(raw) {
+    // Split raw line into string-literal tokens and code tokens
+    const strRe = /('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`)/g;
+    const parts = [];
+    let last = 0, m;
+    strRe.lastIndex = 0;
+    while ((m = strRe.exec(raw)) !== null) {
+      if (m.index > last) parts.push({ t: 'code', v: raw.slice(last, m.index) });
+      parts.push({ t: 'str', v: m[0] });
+      last = m.index + m[0].length;
+    }
+    if (last < raw.length) parts.push({ t: 'code', v: raw.slice(last) });
+
+    return parts.map(p => {
+      if (p.t === 'str') return `<span class="tk-str">${esc(p.v)}</span>`;
+      // Escape the code fragment, then apply token highlights
+      let s = esc(p.v);
+      // TS types — before keywords so they don't double-match
+      s = s.replace(/\b(Record|Promise|Page|Locator|void|string|number|boolean|any)\b/g,
+        '<span class="tk-type">$1</span>');
+      // Keywords
+      s = s.replace(/\b(import|export|const|let|var|async|await|function|return|from|test|expect|true|false|null|undefined|if|else|for|of|in|new|throw|try|catch|type)\b/g,
+        '<span class="tk-kw">$1</span>');
+      // Function/method calls — word immediately before (
+      s = s.replace(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)(?=\s*\()/g,
+        '<span class="tk-fn">$1</span>');
+      // Numbers not preceded by word chars
+      s = s.replace(/(?<![a-zA-Z_$])\b(\d+)\b/g,
+        '<span class="tk-num">$1</span>');
+      return s;
+    }).join('');
+  }
+
+  const rendered = code.split('\n').map((line, i) => {
+    const content = line.trimStart().startsWith('//')
+      ? highlightComment(line)
+      : highlightCode(line);
+    return `<div class="cl"><span class="ln">${i + 1}</span><span class="lc">${content}</span></div>`;
+  });
+
+  disp.innerHTML = rendered.join('');
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+}
+
+function timeNow() {
+  const d = new Date();
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function setCodeDownloadStatus(msg, level) {
+  const el = $('code-download-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `code-download-status${level ? ` ${level}` : ''}`;
+}
+
+function requestNativeCodeSave(kind) {
+  if (state.steps.length === 0) {
+    setCodeDownloadStatus('Save blocked: add or record at least one step first.', 'error');
+    showToast('Record or add steps before saving generated files.', 'error');
+    return;
+  }
+  const kindLabel = kind === 'pom_zip' ? 'POM .zip' : 'TypeScript .ts';
+  const sent = send({ type: 'save_codegen_file', payload: { kind } });
+  if (!sent) {
+    setCodeDownloadStatus('Save blocked: panel is not connected.', 'error');
+    showToast('Panel disconnected. Reconnect and try again.', 'error');
+    return;
+  }
+  setCodeDownloadStatus(`Waiting for native Save dialog for ${kindLabel}…`, '');
+  showToast(`Choose where to save ${kindLabel}.`);
 }
 
 if ($('code-refresh-btn')) {
@@ -4627,14 +4780,13 @@ if ($('code-copy-btn')) {
 
 if ($('code-download-btn')) {
   $('code-download-btn').addEventListener('click', () => {
-    if (!_lastGeneratedCode) return;
-    const blob = new Blob([_lastGeneratedCode], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'playwright-test.ts';
-    a.click();
-    URL.revokeObjectURL(url);
+    requestNativeCodeSave('preview_ts');
+  });
+}
+
+if ($('code-download-pom-btn')) {
+  $('code-download-pom-btn').addEventListener('click', () => {
+    requestNativeCodeSave('pom_zip');
   });
 }
 

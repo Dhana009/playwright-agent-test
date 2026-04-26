@@ -40,6 +40,7 @@ MSG_LLM_BUILD_STEP = "llm_build_step"
 MSG_INSERT_BUILT_STEP = "insert_built_step"
 # Code tab + native save/load folder flows (panel UI → runner)
 MSG_GET_CODE = "get_code"
+MSG_SAVE_CODEGEN_FILE = "save_codegen_file"
 MSG_CHOOSE_RUNS_DIR = "choose_runs_dir"
 MSG_LOAD_FROM_FILE = "load_from_file"
 MSG_SAVE_TO_FILE = "save_to_file"
@@ -61,6 +62,7 @@ MSG_UPLOAD_FIX_RESULT = "upload_fix_result"
 MSG_LLM_ASSIST_RESULT = "llm_assist_result"
 MSG_LLM_BUILD_RESULT = "llm_build_result"
 MSG_CODE_RESULT = "code_result"
+MSG_CODE_FILE_SAVED = "code_file_saved"
 MSG_RUNS_DIR_CHANGED = "runs_dir_changed"
 
 
