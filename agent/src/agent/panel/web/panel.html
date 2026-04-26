@@ -1310,6 +1310,86 @@ html, body {
       </div>
     </div>
 
+    <!-- ── LLM BUILD STEP ── -->
+    <div class="pw-llm-assist" id="llm-build-mode">
+      <div class="pw-llm-assist-head" id="llm-build-head">
+        <span class="pw-llm-assist-chev">
+          <svg viewBox="0 0 10 10" width="10" height="10" fill="currentColor"><path d="M3 1l5 4-5 4V1z"/></svg>
+        </span>
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor" style="color:var(--accent);flex-shrink:0;"><path d="M6 1v10M1 6h10"/></svg>
+        <span class="pw-llm-assist-lbl">Build with LLM</span>
+        <span class="pw-llm-assist-hint" id="llm-build-hint">expand</span>
+      </div>
+      <div class="pw-llm-assist-body">
+
+        <!-- No LLM warning -->
+        <div class="la-no-llm" id="lb-no-llm" style="display:none;">
+          LLM not configured. Go to <strong>Settings</strong> to add an API key.
+        </div>
+
+        <!-- Input form -->
+        <div class="pw-section" id="lb-form">
+          <div style="font-size:10px;color:var(--fg-3);margin-bottom:8px;line-height:1.5;">
+            Can't pick the element? Describe what you want — LLM will find it and build the step.
+          </div>
+
+          <!-- Intent input -->
+          <div class="pw-section-title">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.5"/><path d="M6 5.5v3M6 4v-.5"/></svg>
+            <span>1 — What do you want to do?</span>
+          </div>
+          <textarea class="fp-hint-input" id="lb-intent-input" placeholder="e.g. Select 'India' from the country dropdown · Click the submit button inside the modal · Fill the search box…" style="height:60px;width:100%;"></textarea>
+
+          <!-- Focus picker -->
+          <div class="pw-section-title" style="margin-top:10px;">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5"/><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11"/></svg>
+            <span>2 — Pick focus area</span>
+            <span class="pw-help">?<span class="pw-help-tip">Pick the element or region near what you want. LLM will use this as its DOM anchor — keeps token cost low.</span></span>
+          </div>
+          <button class="pw-pick-btn" id="lb-pick-btn">
+            <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2l4 10 2-4 4-2L2 2z"/></svg>
+            <span id="lb-pick-btn-label">Pick focus area</span>
+            <span class="pick-kbd">Esc</span>
+          </button>
+          <div class="la-picked-el" id="lb-picked-el">
+            <div class="la-picked-label">Focus element</div>
+            <div id="lb-picked-selector"></div>
+          </div>
+        </div>
+
+        <!-- Thinking indicator + stop button -->
+        <div class="la-thinking" id="lb-thinking" style="display:none;align-items:center;gap:8px;">
+          <span class="spinner"></span>
+          <span id="lb-thinking-txt" style="flex:1;">Asking LLM…</span>
+          <button id="lb-stop-btn" title="Force stop LLM" style="background:transparent;border:1px solid var(--danger);color:var(--danger);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;flex-shrink:0;">■ Stop</button>
+        </div>
+
+        <!-- Iteration thread -->
+        <div class="la-thread" id="lb-thread" style="display:none;"></div>
+
+        <!-- Actions -->
+        <div class="pw-section" style="border-top:1px solid var(--border-1);padding-top:10px;" id="lb-actions">
+          <div class="pw-row" style="gap:6px;">
+            <button class="pw-btn" id="lb-run-btn" style="flex:1;background:rgba(45,212,191,0.08);border-color:rgba(45,212,191,0.4);color:var(--accent);">
+              <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M6 .5l1.2 2.8L10 4.5l-2.8 1.2L6 8.5 4.8 5.7 2 4.5l2.8-1.2L6 .5z"/></svg>
+              Ask LLM to build step
+            </button>
+          </div>
+          <div style="font-size:9px;color:var(--fg-4);margin-top:4px;padding:0 2px;">LLM finds the element and runs the action on the page. Check the page — if it worked, insert the step.</div>
+          <!-- Confirmation row — shown after exec_passed, BEFORE insert -->
+          <div style="display:none;margin-top:10px;padding:8px;background:rgba(45,212,191,0.06);border:1px solid rgba(45,212,191,0.25);border-radius:6px;" id="lb-confirm-row">
+            <div style="font-size:10.5px;color:var(--fg-1);margin-bottom:6px;font-weight:600;">👆 Check the page — did it work?</div>
+            <div id="lb-proposed-summary" style="font-size:9.5px;font-family:var(--font-mono);color:var(--accent);margin-bottom:8px;word-break:break-all;"></div>
+            <div class="pw-row" style="gap:6px;">
+              <button class="pw-btn primary" id="lb-insert-btn" style="flex:1;">✓ Yes — insert step</button>
+              <button class="pw-btn danger" id="lb-retry-btn" style="flex:1;">✗ No — try again</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
     <!-- ── LLM ASSIST ── -->
     <div class="pw-llm-assist" id="llm-assist-mode">
       <div class="pw-llm-assist-head" id="llm-assist-head">
@@ -1920,6 +2000,7 @@ function handleMessage(msg) {
     }
     case 'upload_fix_result': onUploadFixResult(payload); break;
     case 'llm_assist_result': onLlmAssistResult(payload); break;
+    case 'llm_build_result': onLlmBuildResult(payload); break;
     case 'code_result': {
       if (payload && payload.code) renderCode(payload.code);
       else if (payload && payload.error) {
@@ -2343,6 +2424,11 @@ function cancelPick() {
 }
 
 function onPickResult(payload) {
+  // Route to LLM Build if it has an active pick
+  if (lbState.picking) {
+    lbOnPickResult(payload.descriptor, payload.candidates);
+    return;
+  }
   // Route to LLM assist if it has an active pick
   if (laState.picking) {
     laOnPickResult(payload.descriptor, payload.candidates);
@@ -4175,6 +4261,308 @@ function laUpdateLastIterCard() {
 
 function laAddSystemMsg(txt) {
   const thread = $('la-thread');
+  if (!thread) return;
+  thread.style.display = 'block';
+  const msg = document.createElement('div');
+  msg.style.cssText = 'font-size:10px;color:var(--fg-3);padding:4px 2px;font-family:var(--font-mono);';
+  msg.textContent = txt;
+  thread.appendChild(msg);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+// ── LLM Build Step ────────────────────────────────────────────────────────────
+
+const lbState = {
+  picking: false,
+  pickedLocator: null,
+  iterations: [],       // NEVER cleared during a run — full history across all rounds
+  waiting: false,
+  stopped: false,       // user force-stopped
+  pendingAttempts: 0,
+  lastProposedStep: null,
+};
+
+$('llm-build-head').addEventListener('click', () => {
+  const el = $('llm-build-mode');
+  const isOpen = el.classList.toggle('open');
+  $('llm-build-hint').textContent = isOpen ? 'collapse' : 'expand';
+  if (isOpen) lbCheckLlmAvailable();
+});
+
+function lbCheckLlmAvailable() {
+  const noLlm = $('lb-no-llm');
+  const form = $('lb-form');
+  const actions = $('lb-actions');
+  const hasLlm = state.llmAvailable;
+  noLlm.style.display = hasLlm ? 'none' : 'block';
+  if (form) form.style.display = hasLlm ? 'block' : 'none';
+  if (actions) actions.style.display = hasLlm ? 'block' : 'none';
+}
+
+$('lb-pick-btn').addEventListener('click', () => {
+  if (lbState.picking) {
+    lbState.picking = false;
+    $('lb-pick-btn-label').textContent = 'Pick focus area';
+    send({ type: 'pick_cancel', payload: {} });
+    return;
+  }
+  lbState.picking = true;
+  $('lb-pick-btn-label').textContent = 'Cancel pick (Esc)';
+  send({ type: 'pick_start', payload: { caller: 'llm_build' } });
+});
+
+function lbOnPickResult(descriptor, candidates) {
+  if (!lbState.picking) return false;
+  lbState.picking = false;
+  $('lb-pick-btn-label').textContent = 'Pick focus area';
+  const best = candidates && candidates[0] ? candidates[0].selector : null;
+  lbState.pickedLocator = best || null;
+  const pickedEl = $('lb-picked-el');
+  const pickedSel = $('lb-picked-selector');
+  if (pickedEl && pickedSel) {
+    pickedSel.textContent = best || (descriptor.tag || '(element)');
+    pickedEl.classList.add('show');
+  }
+  return true;
+}
+
+function lbSerialiseHistory() {
+  return lbState.iterations.map(it => ({
+    iteration: it.iteration,
+    strategy: it.strategy || '',
+    locator: it.locator || '',
+    diagnosis: it.diagnosis || '',
+    outcome: it.outcome || 'pending',
+    error: it.error || null,
+    exec_detail: it.execDetail || null,
+    domDiff: it.domDiff || null,
+  }));
+}
+
+function lbSetThinking(on, txt) {
+  const el = $('lb-thinking');
+  if (!el) return;
+  el.style.display = on ? 'flex' : 'none';
+  if (txt) { const t = $('lb-thinking-txt'); if (t) t.textContent = txt; }
+}
+
+// Fresh start: clears thread + history, then fires first LLM round
+$('lb-run-btn').addEventListener('click', () => {
+  if (lbState.waiting) return;
+  const intent = ($('lb-intent-input').value || '').trim();
+  if (!intent && !lbState.pickedLocator) {
+    lbAddSystemMsg('Describe what you want to do, or pick a focus element first.');
+    return;
+  }
+  // Reset everything for a fresh problem
+  lbState.waiting = true;
+  lbState.stopped = false;
+  lbState.pendingAttempts = 0;
+  lbState.lastProposedStep = null;
+  lbState.iterations = [];
+  $('lb-confirm-row').style.display = 'none';
+  const _lbThread = $('lb-thread');
+  if (_lbThread) { _lbThread.innerHTML = ''; _lbThread.style.display = 'none'; }
+  lbSetThinking(true, 'LLM analysing…');
+  send({
+    type: 'llm_build_step',
+    payload: {
+      intent,
+      pickedLocator: lbState.pickedLocator,
+      iterationHistory: [],  // empty — fresh problem
+    },
+  });
+});
+
+// "No — try again": keeps ALL history so LLM knows what failed, fires next round
+$('lb-retry-btn').addEventListener('click', () => {
+  $('lb-confirm-row').style.display = 'none';
+  lbState.lastProposedStep = null;
+  lbState.stopped = false;
+  const intent = ($('lb-intent-input').value || '').trim();
+  lbState.waiting = true;
+  lbState.pendingAttempts = 0;
+  lbSetThinking(true, `Retrying — LLM has full history of ${lbState.iterations.length} attempt(s)…`);
+  send({
+    type: 'llm_build_step',
+    payload: {
+      intent,
+      pickedLocator: lbState.pickedLocator,
+      iterationHistory: lbSerialiseHistory(),  // full history always
+    },
+  });
+});
+
+// Force stop — halts the auto-loop without clearing history
+$('lb-stop-btn').addEventListener('click', () => {
+  lbState.stopped = true;
+  lbState.waiting = false;
+  lbState.pendingAttempts = 0;
+  lbSetThinking(false);
+  lbAddSystemMsg(`⏹ Stopped after ${lbState.iterations.length} attempt(s). Edit description or pick a new focus area, then click "Ask LLM to build step" to continue.`);
+});
+
+$('lb-insert-btn').addEventListener('click', () => {
+  if (!lbState.lastProposedStep) return;
+  const { action, locator, params } = lbState.lastProposedStep;
+  const lastStepId = state.steps.length > 0 ? state.steps[state.steps.length - 1].stepId : null;
+  // For js_execute, params already contains js_code (set by backend in proposed_step)
+  send({
+    type: 'insert_built_step',
+    payload: { action, locator: locator || null, params: params || {}, insertAfterStepId: lastStepId },
+  });
+  $('lb-confirm-row').style.display = 'none';
+  lbState.lastProposedStep = null;
+  lbAddSystemMsg('✓ Step inserted.');
+});
+
+function onLlmBuildResult(payload) {
+  if (!payload) return;
+  const status = payload.status || '';
+
+  if (status === 'error') {
+    lbSetThinking(false);
+    lbState.waiting = false;
+    lbState.pendingAttempts = 0;
+    lbAddSystemMsg(`Error: ${payload.explanation || 'unknown error'}`);
+    return;
+  }
+
+  if (status === 'executing') {
+    // Track how many sub-attempts to expect in this round
+    const m = (payload.action || '').match(/\[(\d+)\/(\d+)\]/);
+    if (m) lbState.pendingAttempts = parseInt(m[2], 10);
+    lbSetThinking(true, payload.action || 'Executing…');
+    const iter = {
+      iteration: payload.iteration || (lbState.iterations.length + 1),
+      strategy: 'llm_build',
+      locator: payload.locator || '',
+      diagnosis: payload.diagnosis || '',
+      plan: payload.action || '',
+      outcome: 'pending',
+      error: null,
+      execDetail: null,
+      domDiff: null,
+      capturedDom: payload.capturedDom || '',
+    };
+    lbState.iterations.push(iter);
+    lbRenderIterCard(iter, lbState.iterations.length - 1);
+    return;
+  }
+
+  // exec_passed or exec_failed — update the iter card
+  const iterNum = payload.iteration || lbState.iterations.length;
+  const iter = lbState.iterations.find(it => it.iteration === iterNum) ||
+    lbState.iterations[lbState.iterations.length - 1];
+
+  if (iter) {
+    iter.locator = payload.locator || iter.locator;
+    iter.error = payload.execError || null;
+    iter.execDetail = payload.execDetail || null;
+    iter.domDiff = payload.domDiff || null;
+    iter.outcome = (status === 'exec_passed') ? 'exec_passed' : 'exec_failed';
+    lbUpdateLastIterCard();
+  }
+
+  if (status === 'exec_passed') {
+    lbSetThinking(false);
+    lbState.waiting = false;
+    lbState.pendingAttempts = 0;
+    // Freeze the proposed step — do not allow further overwrites until user decides
+    const proposed = payload.proposedStep || null;
+    if (proposed) {
+      lbState.lastProposedStep = proposed;
+      const { action, locator, params } = proposed;
+      const isJs = action === 'js_execute';
+      const summary = isJs
+        ? `js_execute  (custom JS — ran successfully on page)`
+        : `${action}  →  ${locator || '(js)'}${params && params.value ? '  · value: "${params.value}"' : ''}`;
+      const sumEl = $('lb-proposed-summary');
+      if (sumEl) sumEl.textContent = summary;
+      $('lb-confirm-row').style.display = 'block';
+    }
+  } else if (status === 'exec_failed') {
+    lbState.pendingAttempts = Math.max(0, lbState.pendingAttempts - 1);
+    if (lbState.pendingAttempts <= 0) {
+      // All sub-attempts in this round failed
+      if (lbState.stopped) {
+        // User force-stopped — stay idle, history intact
+        lbSetThinking(false);
+        lbState.waiting = false;
+        return;
+      }
+      // Auto-retry: pass full accumulated history so LLM knows everything tried so far
+      const intent = ($('lb-intent-input').value || '').trim();
+      lbState.waiting = true;
+      $('lb-confirm-row').style.display = 'none';
+      const totalTried = lbState.iterations.length;
+      lbSetThinking(true, `Round ${totalTried} done — asking LLM for new strategies (knows all ${totalTried} failed attempts)…`);
+      send({
+        type: 'llm_build_step',
+        payload: {
+          intent,
+          pickedLocator: lbState.pickedLocator,
+          iterationHistory: lbSerialiseHistory(),  // ALL history, every round
+        },
+      });
+    }
+  }
+}
+
+function lbRenderIterCard(iter, idx) {
+  const thread = $('lb-thread');
+  if (!thread) return;
+  thread.style.display = 'block';
+  const card = document.createElement('div');
+  card.className = 'la-iter-card';
+  card.id = `lb-iter-card-${idx}`;
+  const diff = iter.domDiff || {};
+  const diffBadge = diff.changed
+    ? `<span class="la-iter-badge ok">DOM changed</span>`
+    : (diff.changed === false ? `<span class="la-iter-badge fail">no DOM change</span>` : '');
+  card.innerHTML = `
+    <div class="la-iter-head">
+      <span class="la-iter-num">#${iter.iteration}</span>
+      <span class="la-iter-badge diag">build</span>
+      ${diffBadge}
+      <span class="la-iter-outcome" id="lb-iter-outcome-${idx}">running…</span>
+    </div>
+    <div class="la-iter-body" style="font-size:10px;color:var(--fg-2);">${escHtml(iter.diagnosis)}</div>
+    ${iter.plan ? `<div class="la-iter-action" style="color:var(--accent)">${escHtml(iter.plan)}</div>` : ''}
+    ${iter.locator ? `<div style="padding:3px 9px 5px;font-family:var(--font-mono);font-size:9px;color:var(--accent);word-break:break-all;">→ ${escHtml(iter.locator)}</div>` : ''}
+    ${iter.capturedDom ? `<div class="la-dom-toggle" onclick="this.nextElementSibling.classList.toggle('show');this.textContent=this.nextElementSibling.classList.contains('show')?'▲ hide DOM':'▼ show DOM sent to LLM'">▼ show DOM sent to LLM</div><pre class="la-dom-pre">${escHtml(iter.capturedDom)}</pre>` : ''}
+  `;
+  thread.appendChild(card);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function lbUpdateLastIterCard() {
+  const idx = lbState.iterations.length - 1;
+  if (idx < 0) return;
+  const iter = lbState.iterations[idx];
+  const outcomeEl = document.getElementById(`lb-iter-outcome-${idx}`);
+  if (!outcomeEl) return;
+  const labelMap = { exec_passed: '✓ ran', exec_failed: '✗ failed' };
+  const classMap = { exec_passed: 'ok', exec_failed: 'fail' };
+  const o = iter.outcome || 'pending';
+  outcomeEl.className = `la-iter-outcome ${classMap[o] || ''}`;
+  outcomeEl.textContent = labelMap[o] || o;
+  // Update error display if card exists
+  const card = document.getElementById(`lb-iter-card-${idx}`);
+  if (card && iter.error) {
+    const existing = card.querySelector('.lb-err');
+    if (!existing) {
+      const errDiv = document.createElement('div');
+      errDiv.className = 'lb-err';
+      errDiv.style.cssText = 'padding:3px 9px 5px;font-family:var(--font-mono);font-size:9px;color:var(--danger);word-break:break-all;';
+      errDiv.textContent = '✗ ' + iter.error;
+      card.appendChild(errDiv);
+    }
+  }
+}
+
+function lbAddSystemMsg(txt) {
+  const thread = $('lb-thread');
   if (!thread) return;
   thread.style.display = 'block';
   const msg = document.createElement('div');

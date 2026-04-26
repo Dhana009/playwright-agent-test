@@ -36,6 +36,8 @@ MSG_STOP_RECORDING = "stop_recording"
 MSG_DELETE_VERSION = "delete_version"
 MSG_UPLOAD_FIX = "upload_fix"
 MSG_LLM_ASSIST = "llm_assist"
+MSG_LLM_BUILD_STEP = "llm_build_step"
+MSG_INSERT_BUILT_STEP = "insert_built_step"
 # Code tab + native save/load folder flows (panel UI → runner)
 MSG_GET_CODE = "get_code"
 MSG_CHOOSE_RUNS_DIR = "choose_runs_dir"
@@ -57,6 +59,7 @@ MSG_RUN_COMPLETED = "run_completed"
 MSG_RUN_ABORTED = "run_aborted"
 MSG_UPLOAD_FIX_RESULT = "upload_fix_result"
 MSG_LLM_ASSIST_RESULT = "llm_assist_result"
+MSG_LLM_BUILD_RESULT = "llm_build_result"
 MSG_CODE_RESULT = "code_result"
 MSG_RUNS_DIR_CHANGED = "runs_dir_changed"
 
@@ -623,6 +626,40 @@ class PanelBridge:
                 "execDetail": exec_detail,
                 "uploadMethod": upload_method,
                 "domDiff": dom_diff,
+            },
+        })
+
+    async def broadcast_llm_build_result(
+        self,
+        *,
+        iteration: int,
+        status: str,
+        diagnosis: str | None = None,
+        action: str | None = None,
+        locator: str | None = None,
+        params: dict | None = None,
+        explanation: str | None = None,
+        captured_dom: str | None = None,
+        exec_error: str | None = None,
+        exec_detail: str | None = None,
+        dom_diff: dict | None = None,
+        proposed_step: dict | None = None,
+    ) -> None:
+        await self.send({
+            "type": MSG_LLM_BUILD_RESULT,
+            "payload": {
+                "iteration": iteration,
+                "status": status,
+                "diagnosis": diagnosis,
+                "action": action,
+                "locator": locator,
+                "params": params,
+                "explanation": explanation,
+                "capturedDom": captured_dom,
+                "execError": exec_error,
+                "execDetail": exec_detail,
+                "domDiff": dom_diff,
+                "proposedStep": proposed_step,
             },
         })
 

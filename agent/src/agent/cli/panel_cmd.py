@@ -29,6 +29,9 @@ from agent.panel.bridge import (
     MSG_LOAD_FROM_FILE,
     MSG_LOAD_VERSION,
     MSG_LLM_ASSIST,
+    MSG_LLM_BUILD_STEP,
+    MSG_INSERT_BUILT_STEP,
+    MSG_LLM_BUILD_RESULT,
     MSG_PAUSE_REQUEST,
     MSG_PICK_CANCEL,
     MSG_PICK_START,
@@ -214,6 +217,8 @@ async def _run_panel(
     bridge.on(MSG_STOP_RECORDING, state.handle_stop_recording)
     bridge.on(MSG_UPLOAD_FIX, state.handle_upload_fix)
     bridge.on(MSG_LLM_ASSIST, state.handle_llm_assist)
+    bridge.on(MSG_LLM_BUILD_STEP, state.handle_llm_build_step)
+    bridge.on(MSG_INSERT_BUILT_STEP, state.handle_insert_built_step)
     bridge.on("set_llm_config", state.handle_set_llm_config)
     bridge.on(MSG_GET_CODE, state.handle_get_code)
     bridge.on(MSG_CHOOSE_RUNS_DIR, state.handle_choose_runs_dir)
@@ -1015,6 +1020,361 @@ class _PanelState:
                 explanation=f"LLM Assist error: {str(exc)[:200]}",
             )
 
+    # ── LLM Build Step ───────────────────────────────────────────────────
+    # Proactive step builder: user has intent but cannot pick a locator.
+    # LLM finds the right action+locator+params from focused DOM and executes it.
+
+    async def handle_llm_build_step(self, msg: dict[str, Any]) -> None:
+        """LLM-driven step builder. No existing step needed — LLM authors it from intent."""
+        from agent.healing.llm_assist import (
+            capture_focused_dom,
+            capture_screenshot_b64,
+            detect_frameworks,
+            execute_llm_strategy,
+            _build_messages_with_vision,
+            _supports_vision,
+            _format_framework_block,
+            _build_history_block,
+            _extract_json,
+        )
+
+        payload = msg.get("payload", {})
+        intent = (payload.get("intent") or "").strip()
+        picked_locator = payload.get("pickedLocator") or None
+        iteration_history = payload.get("iterationHistory") or []
+
+        if not self.llm_provider:
+            await self.bridge.broadcast_llm_build_result(
+                iteration=1, status="error",
+                explanation="LLM not configured. Go to Settings to add an API key.",
+            )
+            return
+
+        if not intent and not picked_locator:
+            await self.bridge.broadcast_llm_build_result(
+                iteration=1, status="error",
+                explanation="Describe what you want to do, or pick a focus element.",
+            )
+            return
+
+        round_num = len(iteration_history) + 1
+        next_iter_num = max((it.get("iteration", 0) for it in iteration_history), default=0) + 1
+        dom_anchor = picked_locator or "body"
+
+        logger.info("llm_build_step_round intent=%r round=%d", intent[:80], round_num)
+
+        import asyncio as _asyncio
+
+        async def _no_screenshot() -> None:
+            return None
+
+        focused_dom, frameworks, screenshot_b64 = await _asyncio.gather(
+            capture_focused_dom(self.page, dom_anchor, action=""),
+            detect_frameworks(self.page),
+            capture_screenshot_b64(self.page) if _supports_vision(self.llm_provider) else _no_screenshot(),
+        )
+
+        # Progressive DOM expansion: round 2+ gets broader DOM
+        if round_num >= 2 and picked_locator:
+            focused_dom = await self._capture_expanded_dom(picked_locator, round_num)
+
+        history_block = _build_history_block(iteration_history)
+        framework_block = _format_framework_block(frameworks)
+        vision_note = ""
+        if screenshot_b64 and _supports_vision(self.llm_provider):
+            vision_note = "\n[Screenshot of current page state is attached for visual context]\n"
+
+        already_tried = len(iteration_history)
+        failure_warning = ""
+        if already_tried > 0:
+            tried_locators = list(dict.fromkeys(
+                it.get("locator", "") for it in iteration_history if it.get("locator")
+            ))
+            tried_strategies = list(dict.fromkeys(
+                it.get("strategy", "") for it in iteration_history if it.get("strategy")
+            ))
+            failure_warning = f"""
+━━━ ⚠ CRITICAL: {already_tried} ATTEMPT(S) ALREADY FAILED — READ THIS BEFORE PROPOSING ANYTHING ━━━
+Every attempt listed in EXECUTION HISTORY below has already been tried and FAILED on the real page.
+
+Locators already tried (ALL FAILED — do NOT repeat):
+{chr(10).join(f"  ✗ {l}" for l in tried_locators) or "  (none recorded)"}
+
+Strategies already tried: {', '.join(tried_strategies) or '(none)'}
+
+You MUST propose something fundamentally different. Ask yourself:
+  • Is the element actually a custom widget (div/ul/li) instead of a native <select>?
+  • Is the dropdown rendered in a shadow DOM, portal, or detached overlay?
+  • Does clicking the trigger element open a floating list that needs a separate locator?
+  • Is there a React/Vue/Angular state handler that needs a synthetic event?
+  • Can I use js_execute to interact with the component's internal API directly?
+  • Are there more specific selectors in the DOM (data-testid, aria-label, name attr)?
+
+If dom_changed was False for every prior attempt → standard Playwright selectors are not reaching
+the right element. Switch to js_execute with direct DOM manipulation + event dispatch.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+        system_prompt = f"""You are an expert Playwright automation engineer. The user cannot interact with an element on the page.
+Your job: find the correct element in the DOM, choose the right action and strategy, and return executable attempts.{vision_note}
+
+━━━ USER INTENT ━━━
+{intent or "(no description — infer from focus element and DOM)"}
+
+━━━ LIVE DOM (focus area picked by user — this is your ground truth) ━━━
+{focused_dom}
+
+Study the DOM above carefully. Every real element, attribute, role, and class is a clue.
+Look for: id, data-testid, aria-label, role, name, placeholder, class names, tag structure.
+The correct locator MUST be derivable from this DOM — do not guess or invent selectors.
+
+━━━ PAGE FRAMEWORK ━━━
+{framework_block}
+{failure_warning}
+{history_block}
+
+━━━ AVAILABLE ACTIONS ━━━
+click, fill, select, check, uncheck, hover, navigate, assert-visible, assert-text, assert-value,
+assert-checked, assert-enabled, assert-hidden, wait-for, expect-new-tab, expect-dialog
+
+━━━ AVAILABLE STRATEGIES ━━━
+  "locator_fix"   — Playwright locator + action. Use when element is directly interactable.
+  "select_option" — Native <select> or [role=combobox]: locator = the select/combobox, value in params.value.
+  "js_execute"    — Custom JS for custom widgets, shadow DOM, framework components, or when all else fails.
+                    Must be complete self-contained JS body. Use document.querySelector. throw on failure.
+                    Can click trigger, wait for dropdown to open, then click the option.
+
+━━━ DECISION GUIDE ━━━
+• Native <select> tag visible in DOM → select_option strategy, locator = the <select>
+• Custom dropdown (div/ul/li, role=listbox/option) → js_execute: click trigger, wait, click option
+• React/Vue controlled input → js_execute: set value via nativeInputValueSetter + dispatch events
+• Nothing found in focused DOM → use js_execute with document.querySelectorAll to scan broader page
+
+━━━ YOUR JOB ━━━
+1. Study the DOM above — every attribute is a clue. Find the exact interactive element.
+2. If prior attempts failed: propose something STRUCTURALLY DIFFERENT, not just a different selector.
+3. Return up to 3 ordered attempts — best confidence first, creative fallbacks after.
+4. Each attempt must target a locator visible in the DOM above or use js_execute to find it at runtime.
+
+━━━ EXACT OUTPUT FORMAT ━━━
+Return ONLY valid JSON — no prose, no markdown:
+
+{{
+  "diagnosis": "<what element you identified, why prior attempts failed, what you will try differently>",
+  "inferred_action": "<click|fill|select|check|uncheck|hover|navigate|etc>",
+  "inferred_params": {{}},
+  "attempts": [
+    {{
+      "strategy": "<locator_fix|select_option|js_execute>",
+      "locator": "<exact selector from the DOM above, or 'js' if js_execute handles the finding>",
+      "js_code": "<complete JS body — only for js_execute, null otherwise>",
+      "params": {{"value": "..."}},
+      "rationale": "<why this specific approach will succeed where others failed>"
+    }}
+  ]
+}}
+
+HARD RULES:
+• Never repeat a locator+strategy combo that appears in EXECUTION HISTORY
+• locator_fix and select_option: locator must be an exact selector from the DOM above
+• js_execute: js_code must find, interact with, and verify the element — throw Error('reason') on failure
+• diagnosis must explain what is different about this round vs previous failed rounds
+"""
+
+        try:
+            messages = _build_messages_with_vision(system_prompt, screenshot_b64, self.llm_provider)
+            response = await self.llm_provider.chat(messages, max_tokens=1800)
+            raw = (response.content or "").strip()
+            logger.info("llm_build_step_raw round=%d raw=%r", round_num, raw[:400])
+            result = _extract_json(raw)
+
+            inferred_action = (result.get("inferred_action") or "click").strip()
+            inferred_params = result.get("inferred_params") or {}
+            diagnosis = (result.get("diagnosis") or "")[:400]
+            attempts = result.get("attempts") or []
+
+            clean_attempts = []
+            for a in attempts[:3]:
+                if not isinstance(a, dict):
+                    continue
+                attempt_params = a.get("params") or inferred_params or {}
+                clean_attempts.append({
+                    "strategy": (a.get("strategy") or "locator_fix").strip(),
+                    "locator": (a.get("locator") or dom_anchor).strip(),
+                    "js_code": a.get("js_code") or None,
+                    "params": attempt_params,
+                    "rationale": (a.get("rationale") or "")[:300],
+                })
+
+            if not clean_attempts:
+                clean_attempts = [{
+                    "strategy": "locator_fix",
+                    "locator": dom_anchor,
+                    "js_code": None,
+                    "params": inferred_params,
+                    "rationale": "fallback: try picked element with inferred action",
+                }]
+
+            await self._suspend_auto_capture()
+            winning_attempt: dict[str, Any] | None = None
+            try:
+                for attempt_idx, attempt in enumerate(clean_attempts):
+                    strategy = attempt.get("strategy") or "locator_fix"
+                    locator = attempt.get("locator") or dom_anchor
+                    js_code = attempt.get("js_code")
+                    attempt_params = attempt.get("params") or inferred_params or {}
+                    rationale = attempt.get("rationale") or ""
+                    iter_num = next_iter_num + attempt_idx
+
+                    await self.bridge.broadcast_llm_build_result(
+                        iteration=iter_num,
+                        status="executing",
+                        diagnosis=diagnosis,
+                        action=f"[{attempt_idx+1}/{len(clean_attempts)}] {rationale}",
+                        locator=locator,
+                        captured_dom=focused_dom if attempt_idx == 0 else "",
+                    )
+
+                    exec_result = await execute_llm_strategy(
+                        self.page,
+                        strategy=strategy,
+                        locator=locator,
+                        js_code=js_code,
+                        action=inferred_action,
+                        params=attempt_params,
+                        tool_runtime=self.tool_runtime,
+                        tab_id=self.tab_id,
+                        timeout_ms=20_000,
+                        dom_snapshot_selector=dom_anchor,
+                    )
+
+                    success = exec_result.get("success", False)
+                    exec_error = exec_result.get("error") or ""
+                    exec_detail = exec_result.get("exec_detail") or ""
+                    dom_diff = exec_result.get("domDiff") or {}
+
+                    logger.info(
+                        "llm_build_attempt round=%d attempt=%d success=%s dom_changed=%s error=%r",
+                        round_num, attempt_idx + 1, success, dom_diff.get("changed"), exec_error[:80],
+                    )
+
+                    exec_status = "exec_passed" if success else "exec_failed"
+                    await self.bridge.broadcast_llm_build_result(
+                        iteration=iter_num,
+                        status=exec_status,
+                        diagnosis=diagnosis,
+                        action=f"[{attempt_idx+1}/{len(clean_attempts)}] {rationale}",
+                        locator=locator,
+                        exec_error=exec_error,
+                        exec_detail=exec_detail,
+                        dom_diff=dom_diff,
+                        proposed_step={
+                            "action": "js_execute" if strategy == "js_execute" else inferred_action,
+                            "locator": locator,
+                            "params": {**attempt_params, "js_code": js_code} if strategy == "js_execute" else attempt_params,
+                            "strategy": strategy,
+                        } if success else None,
+                    )
+
+                    if success:
+                        winning_attempt = attempt
+                        winning_attempt["iter_num"] = iter_num
+                        winning_attempt["inferred_action"] = inferred_action
+                        winning_attempt["inferred_params"] = attempt_params
+                        break
+
+            finally:
+                await self._resume_auto_capture()
+
+            if winning_attempt:
+                logger.info("llm_build_step_success round=%d strategy=%r action=%r locator=%r",
+                            round_num, winning_attempt.get("strategy"),
+                            inferred_action, winning_attempt.get("locator"))
+            else:
+                logger.info("llm_build_step_all_failed round=%d", round_num)
+
+        except Exception as exc:
+            logger.error("llm_build_step_error error=%s", str(exc))
+            await self.bridge.broadcast_llm_build_result(
+                iteration=next_iter_num, status="error",
+                explanation=f"LLM Build error: {str(exc)[:200]}",
+            )
+
+    async def _capture_expanded_dom(self, locator: str, round_num: int) -> str:
+        """Wider DOM capture for subsequent rounds when focused DOM wasn't enough."""
+        _EXPANDED_JS = """([selector, levels]) => {
+            function clean(el, maxLen) {
+                if (!el) return '';
+                const c = el.cloneNode(true);
+                c.querySelectorAll('script,style,noscript,svg,img').forEach(n => n.remove());
+                c.querySelectorAll('*').forEach(n => {
+                    const cls = n.getAttribute('class');
+                    if (cls) {
+                        const cleaned = cls.split(' ').filter(t => !t.startsWith('__agent')).join(' ').trim();
+                        if (cleaned) n.setAttribute('class', cleaned.slice(0, 60));
+                        else n.removeAttribute('class');
+                    }
+                    const sty = n.getAttribute('style');
+                    if (sty && sty.length > 60) n.setAttribute('style', '…');
+                });
+                return c.outerHTML.slice(0, maxLen);
+            }
+            try {
+                let el = null;
+                try { el = document.querySelector(selector); } catch(_) {}
+                if (!el) {
+                    return clean(document.body, 4000);
+                }
+                let ctx = el;
+                for (let i = 0; i < levels && ctx.parentElement && ctx.parentElement.tagName !== 'BODY'; i++) {
+                    ctx = ctx.parentElement;
+                }
+                return clean(ctx, 4000);
+            } catch(e) { return 'expanded DOM error: ' + String(e); }
+        }"""
+        levels = min(3 + round_num, 8)
+        try:
+            result = await self.page.evaluate(_EXPANDED_JS, [locator, levels])
+            return str(result or "").strip()[:4000]
+        except Exception as exc:
+            return f"(expanded DOM failed: {exc})"
+
+    async def handle_insert_built_step(self, msg: dict[str, Any]) -> None:
+        """User approved a LLM-built step — insert it into the step graph."""
+        payload = msg.get("payload", {})
+        action = payload.get("action", "click")
+        locator = payload.get("locator") or None
+        params = payload.get("params") or {}
+        insert_after_step_id = payload.get("insertAfterStepId") or None
+
+        # For js_execute steps the locator is meaningless ("js") — clear it so
+        # _build_step doesn't create a broken LocatorBundle from it.
+        if action == "js_execute":
+            locator = None
+
+        step = _build_step(
+            action=action,
+            locator=locator,
+            params=params,
+            tab_id=self.tab_id,
+        )
+
+        if insert_after_step_id:
+            idx = next(
+                (i for i, s in enumerate(self.step_graph.steps) if s.step_id == insert_after_step_id),
+                None,
+            )
+            if idx is not None:
+                self.step_graph.steps.insert(idx + 1, step)
+            else:
+                self.step_graph.steps.append(step)
+        else:
+            self.step_graph.steps.append(step)
+
+        step_dict = _step_to_dict(step, locator, params)
+        await self.bridge.broadcast_step_appended(step_dict)
+        logger.info("llm_built_step_inserted step_id=%s action=%s locator=%r", step.step_id, action, locator)
+
     # ── Upload Fix ────────────────────────────────────────────────────────
 
     async def handle_upload_fix(self, msg: dict[str, Any]) -> None:
@@ -1673,6 +2033,18 @@ class _PanelState:
         elif t == "close_tab":
             # Close the current tab and return to the previous one
             await self._close_current_tab()
+        elif t == "js_execute":
+            js_code = params.get("js_code") or params.get("jsCode") or ""
+            if not js_code:
+                raise ValueError("js_execute step has no js_code in params")
+            result = await self.page.evaluate(f"""async () => {{
+                try {{
+                    {js_code}
+                    return {{ ok: true }};
+                }} catch(e) {{ return {{ ok: false, error: String(e) }}; }}
+            }}""")
+            if isinstance(result, dict) and not result.get("ok"):
+                raise RuntimeError(result.get("error") or "js_execute failed")
         else:
             raise ValueError(f"Unsupported action: {action}")
 
