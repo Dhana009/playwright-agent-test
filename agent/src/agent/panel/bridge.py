@@ -36,6 +36,11 @@ MSG_STOP_RECORDING = "stop_recording"
 MSG_DELETE_VERSION = "delete_version"
 MSG_UPLOAD_FIX = "upload_fix"
 MSG_LLM_ASSIST = "llm_assist"
+# Code tab + native save/load folder flows (panel UI → runner)
+MSG_GET_CODE = "get_code"
+MSG_CHOOSE_RUNS_DIR = "choose_runs_dir"
+MSG_LOAD_FROM_FILE = "load_from_file"
+MSG_SAVE_TO_FILE = "save_to_file"
 
 # ── Message types (Python → JS) ────────────────────────────────────────────
 MSG_PICK_RESULT = "pick_result"
@@ -52,6 +57,8 @@ MSG_RUN_COMPLETED = "run_completed"
 MSG_RUN_ABORTED = "run_aborted"
 MSG_UPLOAD_FIX_RESULT = "upload_fix_result"
 MSG_LLM_ASSIST_RESULT = "llm_assist_result"
+MSG_CODE_RESULT = "code_result"
+MSG_RUNS_DIR_CHANGED = "runs_dir_changed"
 
 
 MessageHandler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
@@ -207,11 +214,9 @@ class PanelBridge:
 (() => {{
   if (document.getElementById('__agent_panel_host')) return;
 
-  var PANEL_W = 380;
+  var PANEL_W = 400;
 
-  // Shift the page content left so the panel doesn't overlap it.
-  // We write directly to document.documentElement style (highest specificity,
-  // not affected by page stylesheets) instead of injecting a <style> tag.
+  // Shifts host-page content left: iframe is position:fixed, so margin-right keeps the page usable.
   function __agentApplyMargin(w) {{
     document.documentElement.style.setProperty('margin-right', w + 'px', 'important');
     document.documentElement.style.setProperty('overflow-x', 'hidden', 'important');
@@ -231,15 +236,99 @@ class PanelBridge:
     'height:100%',
     'border:none',
     'z-index:2147483647',
-    'box-shadow:-4px 0 24px rgba(0,0,0,0.5)',
+    'box-shadow:-4px 0 32px rgba(0,0,0,0.5)',
   ].join(';');
   document.documentElement.appendChild(iframe);
 
+  // When the iframe is fully collapsed, it is hidden and this bar stays visible for reopen.
+  var restoreBtn = document.createElement('div');
+  restoreBtn.id = '__agent_panel_restore';
+  restoreBtn.title = 'Open Playwright Agent';
+  restoreBtn.style.cssText = [
+    'display:none',
+    'position:fixed',
+    'top:0',
+    'right:0',
+    'width:44px',
+    'height:100%',
+    'z-index:2147483647',
+    'background:#12171c',
+    'border-left:3px solid #2dd4bf',
+    'cursor:pointer',
+    'flex-direction:column',
+    'align-items:center',
+    'justify-content:flex-start',
+    'padding-top:10px',
+    'gap:0',
+    'box-sizing:border-box',
+  ].join(';');
+  restoreBtn.innerHTML = [
+    '<div style="width:34px;height:34px;background:#2dd4bf;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">',
+    '<svg viewBox="0 0 14 14" width="16" height="16" fill="none" stroke="#0b0d10" stroke-width="2.5"><path d="M5 2l4 5-4 5"/></svg>',
+    '</div>',
+    '<div style="margin-top:14px;color:#2dd4bf;">',
+    '<svg viewBox="0 0 18 18" fill="none" width="18" height="18"><circle cx="9" cy="9" r="8" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="9" r="3" fill="currentColor"/></svg>',
+    '</div>',
+    '<div style="writing-mode:vertical-rl;transform:rotate(180deg);font-size:9px;font-weight:700;color:#2dd4bf;letter-spacing:1.5px;margin-top:10px;font-family:monospace;">AGENT</div>',
+  ].join('');
+  restoreBtn.addEventListener('mouseenter', function() {{ restoreBtn.style.background = '#1a2128'; }});
+  restoreBtn.addEventListener('mouseleave', function() {{ restoreBtn.style.background = '#12171c'; }});
+  restoreBtn.addEventListener('click', function() {{
+    restoreBtn.style.display = 'none';
+    iframe.style.display = '';
+    __agentApplyMargin(lastPanelW);
+    iframe.contentWindow && iframe.contentWindow.postMessage({{ type: 'panel_expand' }}, '*');
+  }});
+  document.documentElement.appendChild(restoreBtn);
+
+  var lastPanelW = PANEL_W;
+
   window.addEventListener('message', function(e) {{
-    if (!e.data || e.data.type !== 'panel_resize') return;
-    var w = e.data.width <= 20 ? e.data.width : Math.max(280, Math.min(600, e.data.width));
-    iframe.style.width = w + 'px';
-    __agentApplyMargin(w);
+    if (!e.data) return;
+    if (e.data.type === 'panel_resize') {{
+      var maxW = Math.floor(window.innerWidth * 0.90);
+      var w = e.data.width;
+      if (w <= 44) {{
+        // Collapsed — hide iframe, show restore button
+        iframe.style.display = 'none';
+        restoreBtn.style.display = 'flex';
+        __agentApplyMargin(44);
+      }} else {{
+        w = Math.max(280, Math.min(maxW, w));
+        lastPanelW = w;
+        iframe.style.width = w + 'px';
+        __agentApplyMargin(w);
+      }}
+    }}
+    // ── Drag resize: parent handles mouse events so drag works outside iframe ─
+    if (e.data.type === 'panel_resize_start') {{
+      var startX = e.data.startX;
+      var startW = e.data.startW;
+      document.documentElement.style.cursor = 'ew-resize';
+      document.documentElement.style.userSelect = 'none';
+      iframe.style.pointerEvents = 'none';
+      iframe.style.transition = 'none';
+      function onMove(ev) {{
+        var maxW = Math.floor(window.innerWidth * 0.90);
+        var delta = startX - ev.screenX;
+        var newW = Math.min(maxW, Math.max(280, startW + delta));
+        lastPanelW = newW;
+        iframe.style.width = newW + 'px';
+        __agentApplyMargin(newW);
+        iframe.contentWindow && iframe.contentWindow.postMessage({{ type: 'panel_resize_move', width: newW }}, '*');
+      }}
+      function onUp() {{
+        document.documentElement.style.cursor = '';
+        document.documentElement.style.userSelect = '';
+        iframe.style.pointerEvents = '';
+        iframe.style.transition = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        iframe.contentWindow && iframe.contentWindow.postMessage({{ type: 'panel_resize_end' }}, '*');
+      }}
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }}
   }});
 }})();
 """

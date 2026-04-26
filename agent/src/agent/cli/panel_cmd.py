@@ -18,11 +18,15 @@ from agent.locator.engine import LocatorEngine
 from agent.panel.bridge import (
     MSG_ACCEPT_LLM_REPAIR,
     MSG_APPEND_STEP,
+    MSG_CHOOSE_RUNS_DIR,
+    MSG_CODE_RESULT,
     MSG_DELETE_STEP,
     MSG_DELETE_VERSION,
     MSG_DUPLICATE_STEP,
     MSG_FORCE_FIX,
+    MSG_GET_CODE,
     MSG_LIST_VERSIONS,
+    MSG_LOAD_FROM_FILE,
     MSG_LOAD_VERSION,
     MSG_LLM_ASSIST,
     MSG_PAUSE_REQUEST,
@@ -30,6 +34,8 @@ from agent.panel.bridge import (
     MSG_PICK_START,
     MSG_REPLAY,
     MSG_RESUME,
+    MSG_RUNS_DIR_CHANGED,
+    MSG_SAVE_TO_FILE,
     MSG_SAVE_VERSION,
     MSG_SET_LLM_MODE,
     MSG_START_RECORDING,
@@ -117,10 +123,43 @@ async def _run_panel(
     versions_store = RecordingVersions(db_path)
 
     # ── Browser session ───────────────────────────────────────────────────
-    browser_session = BrowserSession(browser_name="chromium", headless=headless)
+    browser_session = BrowserSession(
+        browser_name="chromium",
+        headless=headless,
+        launch_options={
+            "args": [
+                "--start-maximized",
+                # Allow public HTTPS pages to connect back to our local WS/HTTP server.
+                # Chrome 98+ blocks public→private network requests by default.
+                "--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights",
+                "--allow-running-insecure-content",
+                # Also needed for the iframe (http://127.0.0.1) inside an https page
+                "--disable-web-security",
+                "--allow-file-access-from-files",
+            ],
+        },
+    )
     await browser_session.start()
 
-    context_opts: dict[str, Any] = {}
+    context_opts: dict[str, Any] = {
+        # null viewport = use actual window size (works with --start-maximized)
+        "no_viewport": True,
+        # Grant all common permissions up-front so no permission popups interrupt recording
+        "permissions": [
+            "camera",
+            "microphone",
+            "geolocation",
+            "notifications",
+            "clipboard-read",
+            "clipboard-write",
+            "payment-handler",
+            "background-sync",
+            "ambient-light-sensor",
+            "accelerometer",
+            "gyroscope",
+            "magnetometer",
+        ],
+    }
     if storage_state_path:
         context_opts["storage_state"] = storage_state_path
 
@@ -176,6 +215,10 @@ async def _run_panel(
     bridge.on(MSG_UPLOAD_FIX, state.handle_upload_fix)
     bridge.on(MSG_LLM_ASSIST, state.handle_llm_assist)
     bridge.on("set_llm_config", state.handle_set_llm_config)
+    bridge.on(MSG_GET_CODE, state.handle_get_code)
+    bridge.on(MSG_CHOOSE_RUNS_DIR, state.handle_choose_runs_dir)
+    bridge.on(MSG_SAVE_TO_FILE, state.handle_save_to_file)
+    bridge.on(MSG_LOAD_FROM_FILE, state.handle_load_from_file)
 
     # Send full state when panel tab reconnects (close/reopen)
     bridge.on_connect(state.handle_connect)
@@ -254,6 +297,13 @@ class _PanelState:
 
         # Upload fix state: stepId -> UploadFixState
         self._upload_fix_states: dict[str, Any] = {}
+
+        # User-chosen root for stepgraph.json (Save / versions); overrides default runs/ layout.
+        self._runs_root: Path | None = None
+
+        # Multi-tab replay: stack of pages to return to after close-tab; pattern set by expect-new-tab.
+        self._tab_stack: list[Any] = []
+        self._pending_new_tab_pattern: str | None = None
 
         # Auto-recording state
         self._recording_active = False
@@ -519,6 +569,9 @@ class _PanelState:
                     locator = step.metadata.get("locator")
                     params = step.metadata.get("params") or {}
                     await self._execute_action(step.action, locator, params)
+                    # After expect-new-tab step, wait for the new tab and switch to it
+                    if step.action.replace("-", "_") == "expect_new_tab":
+                        await self._switch_to_new_tab(timeout_ms=float(params.get("timeoutMs") or 15_000))
                     await self.bridge.broadcast_step_status(step.step_id, "passed")
                 except Exception as exc:
                     self._failing_step_id = step.step_id
@@ -746,7 +799,7 @@ class _PanelState:
         """Persist the current step graph to runs/{run_id}/stepgraph.json. Returns path on success."""
         try:
             from agent.storage.files import get_run_layout
-            layout = get_run_layout(self.run_id)
+            layout = get_run_layout(self.run_id, runs_root=self._runs_root)
             path = layout.run_dir / "stepgraph.json"
             path.write_text(self.step_graph.model_dump_json(indent=2, by_alias=True), encoding="utf-8")
             return path
@@ -1099,7 +1152,13 @@ class _PanelState:
             self._original_steps = list(self.step_graph.steps)
         all_steps = [_step_to_dict(s, s.metadata.get("locator"), s.metadata.get("params")) for s in self.step_graph.steps]
         await self.versions_store.save_version(self.run_id, name, step_ids, all_steps)
+        # Also persist stepgraph.json to the chosen folder (or default runs/)
+        saved_path = self._save_step_graph()
         await self._send_versions_list()
+        await self.bridge.send({
+            "type": "recording_saved",
+            "payload": {"path": str(saved_path) if saved_path else "", "stepCount": len(self.step_graph.steps)},
+        })
 
     async def handle_list_versions(self, _msg: dict[str, Any]) -> None:
         await self._send_versions_list()
@@ -1227,9 +1286,43 @@ class _PanelState:
 
     async def _auto_record_poll(self) -> None:
         """Poll the in-page capture queue and convert events to steps."""
+        known_page_ids: set[int] = {id(self.page)}
+
         while self._recording_active:
             try:
                 await asyncio.sleep(0.15)
+
+                # Auto-detect new tabs opened during recording
+                for page in self.page.context.pages:
+                    if id(page) not in known_page_ids:
+                        known_page_ids.add(id(page))
+                        logger.info("auto_record_new_tab_detected url=%s", page.url)
+                        # Insert expect-new-tab step
+                        url_pattern = page.url.split("?")[0] if page.url else ""
+                        new_tab_step = _build_step(
+                            action="expect_new_tab",
+                            locator=None,
+                            params={"urlPattern": url_pattern, "text": url_pattern},
+                            tab_id=self.tab_id,
+                        )
+                        self.step_graph.steps.append(new_tab_step)
+                        await self.bridge.broadcast_step_appended(
+                            _step_to_dict(new_tab_step, None, {"urlPattern": url_pattern})
+                        )
+                        # Switch recording to new tab
+                        self._tab_stack.append(self.page)
+                        self.page = page
+                        new_tab_id = self.tool_runtime._browser_session.get_tab_id(page)
+                        if new_tab_id:
+                            self.tab_id = new_tab_id
+                        # Inject recorder into new tab
+                        try:
+                            await page.add_init_script(_CAPTURE_QUEUE_INIT_SCRIPT)
+                            await page.evaluate(_CAPTURE_QUEUE_INIT_SCRIPT)
+                            await page.evaluate("window.__agentRecorderArmed = true;")
+                        except Exception as exc:
+                            logger.debug("new_tab_recorder_inject_error error=%s", str(exc))
+
                 events = await self.page.evaluate("""
                     (() => {
                         if (!window.__agentRecorderDrain) return [];
@@ -1563,9 +1656,238 @@ class _PanelState:
                 await self.tool_runtime.wait_for(tab_id=tab_id, target=locator, state=state, timeout_ms=timeout_ms)
         elif t == "dialog_handle":
             dialog_action = params.get("action") or "accept"
-            await self.tool_runtime.dialog_handle(tab_id=tab_id, accept=(dialog_action == "accept"))
+            prompt_text = params.get("text") or params.get("value") or None
+            await self.tool_runtime.dialog_handle(tab_id=tab_id, accept=(dialog_action == "accept"), prompt_text=prompt_text)
+        elif t == "expect_dialog":
+            # Register dialog handler — the next action will trigger it
+            dialog_action = params.get("action") or "accept"
+            prompt_text = params.get("text") or params.get("value") or None
+            await self.tool_runtime.dialog_handle(tab_id=tab_id, accept=(dialog_action == "accept"), prompt_text=prompt_text)
+        elif t == "expect_new_tab":
+            # Register new-tab listener — stores a reference so the next step can pick it up
+            self._pending_new_tab_pattern = params.get("urlPattern") or params.get("text") or None
+        elif t == "switch_tab":
+            # Switch focus to an already-open tab by URL/title pattern
+            pattern = params.get("urlPattern") or params.get("text") or ""
+            await self._switch_to_tab_by_pattern(pattern, timeout_ms=timeout_ms)
+        elif t == "close_tab":
+            # Close the current tab and return to the previous one
+            await self._close_current_tab()
         else:
             raise ValueError(f"Unsupported action: {action}")
+
+    # ── Code generation ───────────────────────────────────────────────────
+
+    async def handle_get_code(self, _msg: dict[str, Any]) -> None:
+        """Build Playwright TypeScript from the current step graph; reply with code_result."""
+        try:
+            from agent.export._ported.codegen import build_playwright_test_source
+            code = build_playwright_test_source(self.step_graph)
+            await self.bridge.send({"type": MSG_CODE_RESULT, "payload": {"code": code}})
+        except Exception as exc:
+            logger.error("get_code_error error=%s", str(exc))
+            await self.bridge.send({"type": MSG_CODE_RESULT, "payload": {"error": str(exc)}})
+
+    # ── Folder picker (macOS AppleScript only; other platforms no-op) ─────
+
+    async def _pick_folder(self, prompt: str) -> "Path | None":
+        """Open a native folder picker. Returns chosen Path or None if cancelled/unsupported."""
+        import subprocess
+        import sys
+        if sys.platform != "darwin":
+            logger.info("folder_picker_unavailable platform=%s", sys.platform)
+            return None
+        result = subprocess.run(
+            ["osascript", "-e", f'POSIX path of (choose folder with prompt "{prompt}")'],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            return None
+        chosen = result.stdout.strip()
+        return Path(chosen) if chosen else None
+
+    async def _pick_file(self, prompt: str) -> "Path | None":
+        """Open a native file picker. Returns chosen Path or None if cancelled/unsupported."""
+        import subprocess
+        import sys
+        if sys.platform != "darwin":
+            logger.info("file_picker_unavailable platform=%s", sys.platform)
+            return None
+        result = subprocess.run(
+            ["osascript", "-e", f'POSIX path of (choose file with prompt "{prompt}")'],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            return None
+        chosen = result.stdout.strip()
+        return Path(chosen) if chosen else None
+
+    async def handle_choose_runs_dir(self, _msg: dict[str, Any]) -> None:
+        """Let the user pick a default folder for recordings; updates _runs_root and notifies the panel."""
+        try:
+            chosen = await self._pick_folder("Choose recordings save folder:")
+            if chosen:
+                self._runs_root = chosen
+                logger.info("runs_dir_changed path=%s", chosen)
+                await self.bridge.send({
+                    "type": MSG_RUNS_DIR_CHANGED,
+                    "payload": {"path": str(chosen)},
+                })
+        except Exception as exc:
+            logger.error("choose_runs_dir_error error=%s", str(exc))
+
+    async def handle_save_to_file(self, msg: dict[str, Any]) -> None:
+        """Save button: open a folder picker, save as <name>.json directly there."""
+        try:
+            name = (msg.get("payload", {}).get("name") or "recording").strip()
+            # Sanitize: keep only safe filename chars
+            safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in name)
+            filename = f"{safe}.json"
+
+            chosen_dir = await self._pick_folder("Choose folder to save recording:")
+            if not chosen_dir:
+                return
+            self._runs_root = chosen_dir
+            path = chosen_dir / filename
+            path.write_text(
+                self.step_graph.model_dump_json(indent=2, by_alias=True),
+                encoding="utf-8",
+            )
+            logger.info("save_to_file_ok path=%s", path)
+            await self.bridge.send({
+                "type": MSG_RUNS_DIR_CHANGED,
+                "payload": {"path": str(chosen_dir)},
+            })
+            await self.bridge.send({
+                "type": "recording_saved",
+                "payload": {"path": str(path), "stepCount": len(self.step_graph.steps)},
+            })
+        except Exception as exc:
+            logger.error("save_to_file_error error=%s", str(exc))
+            await self.bridge.send({
+                "type": "notify",
+                "payload": {"level": "error", "message": f"Save failed: {exc}"},
+            })
+
+    async def handle_load_from_file(self, _msg: dict[str, Any]) -> None:
+        """Open a native file picker, load a stepgraph.json, replace current steps."""
+        try:
+            import json as _json
+            chosen = await self._pick_file("Open a stepgraph.json recording:")
+            if not chosen:
+                return
+
+            raw = chosen.read_text(encoding="utf-8")
+            data = _json.loads(raw)
+            from agent.stepgraph.models import StepGraph as SG
+            loaded = SG.model_validate(data)
+            self.step_graph.steps = list(loaded.steps)
+            steps_dicts = [
+                _step_to_dict(s, s.metadata.get("locator"), s.metadata.get("params"))
+                for s in self.step_graph.steps
+            ]
+            await self.bridge.send({
+                "type": "version_loaded",
+                "payload": {"name": chosen.name, "steps": steps_dicts},
+            })
+            await self.bridge.send({
+                "type": "recording_saved",
+                "payload": {"path": str(chosen), "stepCount": len(self.step_graph.steps)},
+            })
+            logger.info("load_from_file_ok path=%s steps=%d", chosen, len(self.step_graph.steps))
+        except Exception as exc:
+            logger.error("load_from_file_error error=%s", str(exc))
+            await self.bridge.send({
+                "type": "notify",
+                "payload": {"level": "error", "message": f"Could not load file: {exc}"},
+            })
+
+    async def _switch_to_new_tab(self, timeout_ms: float = 15_000) -> None:
+        """Wait for a new tab to open in the context and switch focus to it."""
+        import asyncio
+        context = self.page.context
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        pattern = self._pending_new_tab_pattern
+        self._pending_new_tab_pattern = None
+
+        known_pages = set(id(p) for p in context.pages)
+
+        while asyncio.get_event_loop().time() < deadline:
+            for page in context.pages:
+                if id(page) not in known_pages:
+                    # If a URL pattern was given, wait a moment for the tab to load then check
+                    if pattern:
+                        try:
+                            await page.wait_for_load_state("domcontentloaded", timeout=8_000)
+                        except Exception:
+                            pass
+                        if pattern.lower() not in page.url.lower() and pattern.lower() not in (await page.title()).lower():
+                            continue
+                    self._tab_stack.append(self.page)
+                    self.page = page
+                    new_tab_id = self.tool_runtime._browser_session.get_tab_id(page)
+                    if new_tab_id:
+                        self.tab_id = new_tab_id
+                    try:
+                        await page.bring_to_front()
+                        await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+                    except Exception:
+                        pass
+                    logger.info("new_tab_switched url=%s", page.url)
+                    return
+            await asyncio.sleep(0.25)
+
+        raise TimeoutError(f"expect-new-tab: no new tab opened within {timeout_ms}ms")
+
+    async def _switch_to_tab_by_pattern(self, pattern: str, timeout_ms: float = 10_000) -> None:
+        """Switch focus to an open tab whose URL or title matches pattern."""
+        import asyncio
+        context = self.page.context
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+
+        while asyncio.get_event_loop().time() < deadline:
+            for page in context.pages:
+                url_match = pattern.lower() in page.url.lower() if pattern else False
+                title_match = False
+                try:
+                    title_match = pattern.lower() in (await page.title()).lower() if pattern else False
+                except Exception:
+                    pass
+                if url_match or title_match or not pattern:
+                    if id(page) != id(self.page):
+                        self._tab_stack.append(self.page)
+                    self.page = page
+                    new_tab_id = self.tool_runtime._browser_session.get_tab_id(page)
+                    if new_tab_id:
+                        self.tab_id = new_tab_id
+                    try:
+                        await page.bring_to_front()
+                    except Exception:
+                        pass
+                    logger.info("switch_tab_by_pattern pattern=%r url=%s", pattern, page.url)
+                    return
+            await asyncio.sleep(0.25)
+
+        raise TimeoutError(f"switch-tab: no tab matching '{pattern}' found within {timeout_ms}ms")
+
+    async def _close_current_tab(self) -> None:
+        """Close the current tab and return focus to the previous tab."""
+        closing = self.page
+        if self._tab_stack:
+            prev = self._tab_stack.pop()
+            self.page = prev
+            prev_tab_id = self.tool_runtime._browser_session.get_tab_id(prev)
+            if prev_tab_id:
+                self.tab_id = prev_tab_id
+            try:
+                await prev.bring_to_front()
+            except Exception:
+                pass
+        try:
+            await closing.close()
+        except Exception:
+            pass
+        logger.info("tab_closed remaining_tabs=%d", len(self.page.context.pages))
 
     async def _suspend_auto_capture(self) -> None:
         self._capture_suspend_depth += 1
@@ -1638,7 +1960,11 @@ def _infer_mode(action: str) -> StepMode:
         return StepMode.ASSERTION
     if action in ("navigate", "navigate-back", "navigate_back"):
         return StepMode.NAVIGATION
-    if action in ("wait-for", "wait_for", "wait-timeout", "wait_timeout"):
+    if action in (
+        "wait-for", "wait_for", "wait-timeout", "wait_timeout",
+        "switch-tab", "switch_tab", "close-tab", "close_tab",
+        "expect-new-tab", "expect_new_tab", "expect-dialog", "expect_dialog",
+    ):
         return StepMode.WAIT
     return StepMode.ACTION
 

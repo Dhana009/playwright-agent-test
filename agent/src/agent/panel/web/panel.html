@@ -59,42 +59,71 @@ html, body {
 /* ── Panel shell ── */
 #panel-root {
   position: fixed;
-  inset: 0;
-  width: 380px;
+  top: 0; right: 0; bottom: 0;
+  width: 400px;
   display: flex;
   flex-direction: column;
   background: var(--bg-0);
-  border-right: 1px solid var(--border-1);
+  border-left: 1px solid var(--border-2);
+  box-shadow: -4px 0 32px rgba(0,0,0,0.45);
   overflow: hidden;
+  /* transition only for collapse/expand click — disabled during drag via JS */
+  transition: none;
 }
-#panel-root.collapsed { width: 18px; }
+#panel-root.collapsed { width: 44px; background: #12171c; }
+#panel-root.snap-transition { transition: width 0.15s ease; }
 
-/* ── Resize handle ── */
+/* ── Resize handle — on LEFT edge so user drags left/right ── */
 #resize-handle {
   position: absolute;
-  top: 0; right: 0; bottom: 0;
-  width: 3px;
-  background: linear-gradient(180deg, transparent, var(--accent-line) 30%, var(--accent-line) 70%, transparent);
+  top: 0; left: 0; bottom: 0;
+  width: 5px;
   cursor: ew-resize;
-  opacity: 0.6;
   z-index: 10;
+  background: transparent;
+  transition: background 120ms;
 }
-#resize-handle:hover { opacity: 1; background: linear-gradient(180deg, transparent, var(--accent), transparent); }
+#resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 1px;
+  transform: translateY(-50%);
+  width: 3px; height: 40px;
+  border-radius: 2px;
+  background: var(--accent-line);
+  opacity: 0.7;
+  transition: opacity 120ms, height 120ms;
+}
+#resize-handle:hover::after { opacity: 1; height: 60px; background: var(--accent); }
 
 /* ── Collapsed tab ── */
 #collapsed-tab {
   display: none;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0;
-  gap: 8px;
+  justify-content: flex-start;
+  padding: 10px 0 8px;
+  gap: 0;
   height: 100%;
   cursor: pointer;
-  background: var(--bg-1);
-  border-right: 1px solid var(--border-2);
-  width: 18px;
+  background: #12171c;
+  border-left: 3px solid var(--accent);
+  width: 44px;
+  overflow: hidden;
 }
-#collapsed-tab:hover { background: var(--bg-2); }
+#collapsed-tab:hover { background: #1a2128; }
+/* Expand arrow button — solid accent so it's always visible */
+#collapsed-expand-btn {
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px;
+  background: var(--accent); color: #0b0d10;
+  flex-shrink: 0;
+  transition: background 120ms, transform 120ms;
+}
+#collapsed-tab:hover #collapsed-expand-btn {
+  background: #5ef0e0; transform: scale(1.08);
+}
 #panel-root.collapsed #collapsed-tab { display: flex; }
 #panel-root.collapsed #panel-content { display: none; }
 .collapsed-rec {
@@ -103,7 +132,7 @@ html, body {
   box-shadow: 0 0 6px var(--danger);
   flex-shrink: 0;
 }
-.collapsed-rec.idle { background: var(--fg-4); box-shadow: none; }
+.collapsed-rec.idle { background: var(--fg-3); box-shadow: none; }
 .collapsed-ico {
   color: var(--fg-3);
   display: flex; align-items: center; justify-content: center;
@@ -697,6 +726,20 @@ html, body {
 .action-badge.assert { background: var(--purple-ghost); color: var(--purple); }
 .action-badge.nav { background: var(--gray-ghost); color: var(--fg-2); }
 .action-badge.wait { background: rgba(210,153,34,0.12); color: var(--warn); }
+.action-badge.tab { background: rgba(45,212,191,0.12); color: var(--accent); }
+.action-badge.dialog { background: rgba(248,81,73,0.12); color: var(--danger); }
+
+/* ── Tab context badge on step rows ── */
+.step-tab-badge {
+  display: inline-flex; align-items: center; padding: 1px 5px; border-radius: 3px;
+  font-size: 9px; font-weight: 600; font-family: var(--font-mono); flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+.step-tab-badge.tab-1 { background: var(--gray-ghost); color: var(--fg-3); }
+.step-tab-badge.tab-2 { background: var(--info-ghost); color: var(--info); }
+.step-tab-badge.tab-3 { background: var(--success-ghost); color: var(--success); }
+.step-tab-badge.tab-4 { background: var(--purple-ghost); color: var(--purple); }
+.step-tab-badge.tab-5 { background: var(--warn-ghost); color: var(--warn); }
 .step-label { font-size: 11.5px; font-weight: 500; color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .step-selector { font-family: var(--font-mono); font-size: 10px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step-error { font-family: var(--font-mono); font-size: 10px; color: var(--danger); margin-top: 2px; line-height: 1.4; word-break: break-word; }
@@ -973,6 +1016,47 @@ html, body {
 .uf-actions .pw-btn { flex: 1; height: 26px; font-size: 10.5px; min-width: 80px; }
 .uf-outcome-btns { padding: 6px 12px 10px; display: flex; gap: 6px; }
 .uf-outcome-btns .pw-btn { flex: 1; height: 24px; font-size: 10px; }
+
+/* ── Code tab ── */
+#code-tab-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  gap: 8px;
+}
+#code-tab-panel.active { display: flex; }
+.code-toolbar {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.code-toolbar-title {
+  font-size: 11px; font-weight: 600; color: var(--fg-1); flex: 1;
+}
+#code-display {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg-1);
+  white-space: pre;
+  tab-size: 2;
+  min-height: 120px;
+}
+#code-display .code-kw   { color: #ff7b72; }
+#code-display .code-str  { color: #a5d6ff; }
+#code-display .code-fn   { color: #d2a8ff; }
+#code-display .code-cmt  { color: var(--fg-3); font-style: italic; }
+#code-display .code-num  { color: #79c0ff; }
+.code-empty {
+  color: var(--fg-3); font-size: 11px; font-family: var(--font-sans);
+  text-align: center; padding: 30px 0;
+}
 </style>
 </head>
 <body>
@@ -980,13 +1064,25 @@ html, body {
 <div id="panel-root">
   <div id="resize-handle"></div>
 
-  <!-- Collapsed tab -->
-  <div id="collapsed-tab" title="Expand panel (click to open)">
-    <div class="collapsed-ico" style="margin-top:4px;">
-      <svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M3 2l4 3-4 3"/></svg>
+  <!-- Collapsed tab — click to restore panel -->
+  <div id="collapsed-tab" title="Click to expand panel">
+    <!-- Expand button -->
+    <div id="collapsed-expand-btn">
+      <svg viewBox="0 0 14 14" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 2l4 5-4 5"/></svg>
     </div>
-    <div class="collapsed-rec idle" id="collapsed-rec-dot" style="margin-top:2px;"></div>
-    <div class="collapsed-count" id="collapsed-step-count">0</div>
+    <!-- Agent logo -->
+    <div style="margin-top:12px;display:flex;align-items:center;justify-content:center;color:var(--accent);">
+      <svg viewBox="0 0 18 18" fill="none" width="18" height="18">
+        <circle cx="9" cy="9" r="8" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="9" cy="9" r="3" fill="currentColor"/>
+      </svg>
+    </div>
+    <!-- Rotated label -->
+    <div style="writing-mode:vertical-rl;transform:rotate(180deg);font-size:9px;font-weight:700;color:var(--accent);letter-spacing:1.5px;margin-top:10px;font-family:var(--font-mono);">AGENT</div>
+    <!-- Recording dot -->
+    <div class="collapsed-rec idle" id="collapsed-rec-dot" style="margin-top:10px;"></div>
+    <!-- Step count -->
+    <div class="collapsed-count" id="collapsed-step-count" style="margin-top:4px;">0</div>
   </div>
 
   <!-- Main panel content -->
@@ -1009,8 +1105,8 @@ html, body {
           <circle cx="7" cy="7" r="2"/><path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.6 2.6l1 1M10.4 10.4l1 1M2.6 11.4l1-1M10.4 3.6l1-1"/>
         </svg>
       </button>
-      <button class="pw-iconbtn" id="collapse-btn" title="Collapse panel">
-        <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2l-4 5 4 5"/></svg>
+      <button class="pw-iconbtn" id="collapse-btn" title="Collapse panel — click the bar on the right edge to reopen" style="width:30px;height:30px;border:1px solid var(--border-2);border-radius:6px;color:var(--fg-0);background:var(--bg-2);flex-shrink:0;">
+        <svg viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2l-5 5 5 5"/></svg>
       </button>
     </div>
 
@@ -1022,8 +1118,8 @@ html, body {
       <span class="url-path" id="url-path"></span>
     </div>
 
-    <!-- Workflow banner: Record → Review → Replay -->
-    <div class="pw-workflow" id="workflow-banner">
+    <!-- Workflow banner: Record → Review → Replay → Code -->
+    <div class="pw-workflow" id="workflow-banner" style="grid-template-columns:1fr 1fr 1fr 1fr;">
       <div class="pw-wf-step active" id="wf-record" data-stage="record">
         <div class="wf-num">1</div>
         <span class="wf-lbl">Record</span>
@@ -1035,6 +1131,12 @@ html, body {
       <div class="pw-wf-step" id="wf-replay" data-stage="replay">
         <div class="wf-num">3</div>
         <span class="wf-lbl">Replay</span>
+      </div>
+      <div class="pw-wf-step" id="wf-code" data-stage="code">
+        <div class="wf-num">
+          <svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2L1 5l2 3M7 2l2 3-2 3"/></svg>
+        </div>
+        <span class="wf-lbl">Code</span>
       </div>
     </div>
 
@@ -1140,6 +1242,12 @@ html, body {
                 <option value="wait-for">wait-for</option>
                 <option value="wait-timeout">wait-timeout</option>
                 <option value="dialog-handle">dialog-handle</option>
+              </optgroup>
+              <optgroup label="Tabs &amp; popups">
+                <option value="expect-new-tab">expect-new-tab (before click that opens tab)</option>
+                <option value="switch-tab">switch-tab (focus a tab by URL/title)</option>
+                <option value="close-tab">close-tab (close current tab)</option>
+                <option value="expect-dialog">expect-dialog (before click that triggers dialog)</option>
               </optgroup>
             </select>
             <button class="pw-btn" id="add-page-action-btn" title="Add page-level action (no element required)">
@@ -1484,7 +1592,11 @@ html, body {
       <select class="pw-select" id="version-select" title="Load a saved recording">
         <option value="main">— unsaved —</option>
       </select>
-      <button class="pw-btn primary" id="save-version-btn" disabled title="Save current steps with a name">
+      <button class="pw-btn" id="load-file-btn" title="Load recording from a stepgraph.json file" style="flex-shrink:0;">
+        <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 9V3l4-2 4 2v6l-4 2-4-2z"/><path d="M5 11V5l2-1 2 1v6"/></svg>
+        Open
+      </button>
+      <button class="pw-btn primary" id="save-version-btn" disabled title="Save recording — give it a name, then choose a folder">
         <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor"><path d="M1 1h7l3 3v7H1V1zm4 8a2 2 0 100-4 2 2 0 000 4z"/></svg>
         Save
       </button>
@@ -1497,7 +1609,7 @@ html, body {
     <div class="pw-save-version" id="save-version-panel">
       <div style="font-size:10.5px;color:var(--fg-1);font-weight:600;margin-bottom:6px;">Save recording</div>
       <input type="text" class="pw-input" id="version-name-input" placeholder="Name (e.g. login-flow)…" style="width:100%;margin-bottom:6px;"/>
-      <div style="font-size:10px;color:var(--fg-3);margin-bottom:6px;">Saves all <span id="save-step-count">0</span> current steps.</div>
+      <div style="font-size:10px;color:var(--fg-3);margin-bottom:6px;">Saves <span id="save-step-count">0</span> steps as <em>&lt;name&gt;.json</em> in a folder you choose.</div>
       <div class="pw-row">
         <button class="pw-btn" id="cancel-save-version-btn" style="flex:1;">Cancel</button>
         <button class="pw-btn primary" id="confirm-save-version-btn" style="flex:1;">Save</button>
@@ -1538,6 +1650,29 @@ html, body {
       </div>
     </div>
 
+    <!-- ── CODE TAB PANEL ── -->
+    <div id="code-tab-panel">
+      <div class="code-toolbar">
+        <span class="code-toolbar-title">
+          <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" style="vertical-align:-1px;margin-right:4px;"><path d="M3 2L1 6l2 4M9 2l2 4-2 4"/></svg>
+          Playwright TypeScript
+        </span>
+        <button class="pw-btn" id="code-refresh-btn" title="Regenerate code from current steps" style="height:24px;font-size:10px;">
+          <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 6A4 4 0 112 6"/><path d="M10 3v3h-3"/></svg>
+          Refresh
+        </button>
+        <button class="pw-btn" id="code-copy-btn" title="Copy code to clipboard" style="height:24px;font-size:10px;">
+          <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="4" y="4" width="7" height="8" rx="1"/><path d="M1 1h7v3"/></svg>
+          Copy
+        </button>
+        <button class="pw-btn primary" id="code-download-btn" title="Download as .ts file" style="height:24px;font-size:10px;">
+          <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1v7M3 6l3 3 3-3M1 10h10"/></svg>
+          .ts
+        </button>
+      </div>
+      <div id="code-display"><div class="code-empty">Switch to the Code tab to generate TypeScript.<br>Click Refresh after making changes to steps.</div></div>
+    </div>
+
     <!-- ── STATUS BAR ── -->
     <div class="pw-status-bar">
       <span class="status-item ok">
@@ -1550,6 +1685,11 @@ html, body {
       <span class="status-item" id="sb-last-run">Last run: never</span>
       <span class="status-grow"></span>
       <span class="status-item" id="sb-llm">LLM: off</span>
+      <span class="status-sep">·</span>
+      <span class="status-item" id="sb-runs-dir" title="Recordings save folder" style="cursor:pointer;color:var(--fg-3);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" onclick="requestChooseRunsDir()">
+        <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.3" style="vertical-align:-1px;margin-right:2px;"><path d="M1 3h4l1 1h5v7H1V3z"/></svg>
+        <span id="sb-runs-dir-text">runs/</span>
+      </span>
     </div>
 
   </div><!-- /panel-content -->
@@ -1780,6 +1920,38 @@ function handleMessage(msg) {
     }
     case 'upload_fix_result': onUploadFixResult(payload); break;
     case 'llm_assist_result': onLlmAssistResult(payload); break;
+    case 'code_result': {
+      if (payload && payload.code) renderCode(payload.code);
+      else if (payload && payload.error) {
+        const disp = $('code-display');
+        if (disp) disp.innerHTML = `<div class="code-empty" style="color:var(--danger);">Error generating code: ${escHtml(payload.error)}</div>`;
+      }
+      break;
+    }
+    case 'runs_dir_changed': {
+      if (payload && payload.path) {
+        const el = $('sb-runs-dir-text');
+        if (el) el.textContent = payload.path.length > 22 ? '…' + payload.path.slice(-20) : payload.path;
+        if (el) el.title = payload.path;
+      }
+      break;
+    }
+    case 'recording_saved': {
+      if (payload && payload.path) {
+        const dirPart = payload.path.replace(/\/[^/]+$/, '');
+        const el = $('sb-runs-dir-text');
+        if (el) {
+          el.textContent = dirPart.length > 22 ? '…' + dirPart.slice(-20) : dirPart;
+          el.title = dirPart;
+        }
+        showToast(`Saved ${payload.stepCount || ''} steps → ${payload.path}`);
+      }
+      break;
+    }
+    case 'notify': {
+      if (payload && payload.message) showToast(payload.message, payload.level);
+      break;
+    }
   }
 }
 
@@ -1981,8 +2153,41 @@ function setWorkflowStage(stage) {
   state.workflowStage = stage;
   const stages = ['record', 'review', 'replay'];
   const idx = stages.indexOf(stage);
+
+  // Toggle code tab panel
+  const codePanel = $('code-tab-panel');
+  const scrollBody = $('panel-scroll-body');
+  const replayControls = $('replay-controls');
+  const versionsBar = $('pw-versions-bar');
+
+  if (stage === 'code') {
+    if (codePanel) codePanel.classList.add('active');
+    if (scrollBody) scrollBody.style.display = 'none';
+    if (replayControls) replayControls.style.display = 'none';
+    if (versionsBar) versionsBar.style.display = 'none';
+    // Mark code tab active, others inactive
+    stages.forEach(s => {
+      const el = $('wf-' + s);
+      if (el) { el.classList.remove('active', 'done'); }
+    });
+    const codeEl = $('wf-code');
+    if (codeEl) codeEl.classList.add('active');
+    // Auto-generate code when tab is opened
+    requestCode();
+    return;
+  }
+
+  // Non-code stage — restore normal view
+  if (codePanel) codePanel.classList.remove('active');
+  if (scrollBody) scrollBody.style.display = '';
+  if (replayControls) replayControls.style.display = '';
+  if (versionsBar) versionsBar.style.display = '';
+  const codeEl = $('wf-code');
+  if (codeEl) codeEl.classList.remove('active');
+
   stages.forEach((s, i) => {
     const el = $('wf-' + s);
+    if (!el) return;
     el.classList.remove('active', 'done');
     if (i < idx) { el.classList.add('done'); el.querySelector('.wf-num').textContent = '✓'; }
     else if (i === idx) { el.classList.add('active'); el.querySelector('.wf-num').textContent = i + 1; }
@@ -2217,7 +2422,7 @@ function setContextualAction(candidate) {
 }
 
 // ── Action config ─────────────────────────────────────────────────────────────
-const PAGE_LEVEL_ACTIONS = new Set(['navigate','navigate-back','wait-for','wait-timeout','dialog-handle','assert-url','assert-title']);
+const PAGE_LEVEL_ACTIONS = new Set(['navigate','navigate-back','wait-for','wait-timeout','dialog-handle','switch-tab','close-tab','expect-new-tab','expect-dialog','assert-url','assert-title']);
 
 $('action-select').addEventListener('change', () => {
   state.userPickedAction = true;
@@ -2236,11 +2441,19 @@ $('action-select').addEventListener('change', () => {
   }
 });
 
+// Actions that benefit from a per-step timeout override
+const TIMEOUT_ACTIONS = new Set([
+  'assert-visible','assert-hidden','assert-text','assert-value','assert-checked',
+  'assert-enabled','assert-url','assert-title','wait-for','click','fill','type',
+  'check','uncheck','hover','focus','press','select','upload',
+]);
+
 function updateParamInputs() {
   const action = $('action-select').value;
   // Preserve any value the user already typed before we replace the input
   const existingInput = document.getElementById('action-param');
   const existingValue = existingInput ? existingInput.value : '';
+  const existingTimeout = document.getElementById('action-timeout') ? document.getElementById('action-timeout').value : '';
 
   const textActions = ['fill','type','assert-text','assert-title','assert-url','assert-value','navigate','press'];
   const numActions = ['wait-timeout'];
@@ -2256,10 +2469,47 @@ function updateParamInputs() {
   } else if (stateActions.includes(action)) {
     html = `<select class="pw-select" id="action-param" style="width:100%"><option value="visible">visible</option><option value="hidden">hidden</option><option value="attached">attached</option><option value="detached">detached</option></select>`;
   } else if (dialogActions.includes(action)) {
-    html = `<div style="display:flex;gap:10px;font-size:11px;color:var(--fg-2);align-items:center;"><label><input type="radio" name="dlg" value="accept" checked> accept</label><label><input type="radio" name="dlg" value="dismiss"> dismiss</label></div>`;
+    html = `<div style="background:var(--warn-ghost);border:1px solid rgba(210,153,34,0.3);border-radius:4px;padding:5px 8px;font-size:10px;color:var(--warn);margin-bottom:5px;">
+      ⚠ Place this step <strong>before</strong> the click that triggers the dialog. Playwright registers the handler first, then the click fires it.
+    </div>
+    <div style="display:flex;gap:10px;font-size:11px;color:var(--fg-2);align-items:center;margin-bottom:4px;"><label><input type="radio" name="dlg" value="accept" checked> accept</label><label><input type="radio" name="dlg" value="dismiss"> dismiss</label></div>
+    <input type="text" class="pw-input" id="action-param" placeholder="Text to type into prompt (leave blank for alert/confirm)" style="width:100%;"/>`;
+  } else if (action === 'expect-new-tab') {
+    html = `<div style="background:var(--info-ghost);border:1px solid rgba(88,166,255,0.3);border-radius:4px;padding:6px 8px;font-size:10px;color:var(--info);margin-bottom:4px;">
+      ℹ Add this step <strong>before</strong> the click that opens a new tab. The agent registers a listener, fires the click, then switches focus to the new tab automatically.
+    </div>
+    <input type="text" class="pw-input" id="action-param" placeholder="URL pattern to wait for (e.g. /dashboard) — optional" style="width:100%;"/>`;
+  } else if (action === 'switch-tab') {
+    html = `<div style="background:var(--info-ghost);border:1px solid rgba(88,166,255,0.3);border-radius:4px;padding:6px 8px;font-size:10px;color:var(--info);margin-bottom:4px;">
+      ℹ Switches focus to a tab whose URL or title matches the pattern below. Use this to jump between open tabs.
+    </div>
+    <input type="text" class="pw-input" id="action-param" placeholder="URL or title pattern (e.g. /checkout or Payment)" style="width:100%;"/>`;
+  } else if (action === 'close-tab') {
+    html = `<div style="background:var(--warn-ghost);border:1px solid rgba(210,153,34,0.3);border-radius:4px;padding:6px 8px;font-size:10px;color:var(--warn);">
+      Closes the currently focused tab. Focus returns to the previous tab automatically.
+    </div>`;
+  } else if (action === 'expect-dialog') {
+    html = `<div style="background:var(--warn-ghost);border:1px solid rgba(210,153,34,0.3);border-radius:4px;padding:6px 8px;font-size:10px;color:var(--warn);margin-bottom:5px;">
+      ⚠ Add this step <strong>before</strong> the click that triggers the dialog. The agent registers the handler first, then the click fires it.
+    </div>
+    <div style="display:flex;gap:10px;font-size:11px;color:var(--fg-2);align-items:center;margin-bottom:6px;">
+      <label><input type="radio" name="dlg" value="accept" checked> accept</label>
+      <label><input type="radio" name="dlg" value="dismiss"> dismiss</label>
+    </div>
+    <input type="text" class="pw-input" id="action-param" placeholder="Text to type into prompt (leave blank for alert/confirm)" style="width:100%;"/>`;
   } else if (fileActions.includes(action)) {
     html = `<input type="text" class="pw-input" id="action-param" placeholder="Paste absolute file path e.g. /Users/you/file.pdf" style="width:100%;border-color:var(--purple);"/>`;
   }
+
+  // Append timeout input for any action that supports it
+  if (TIMEOUT_ACTIONS.has(action)) {
+    html += `<div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+      <label style="font-size:10px;color:var(--fg-3);white-space:nowrap;flex-shrink:0;">Timeout (ms)</label>
+      <input type="number" class="pw-input" id="action-timeout" placeholder="default" min="500" step="1000"
+        style="flex:1;font-size:11px;" title="Max wait time for this step. Leave blank to use default (10s)."/>
+    </div>`;
+  }
+
   const pi = $('param-inputs');
   pi.innerHTML = html;
   pi.style.display = html ? 'block' : 'none';
@@ -2269,19 +2519,46 @@ function updateParamInputs() {
     const newInput = document.getElementById('action-param');
     if (newInput && newInput.tagName === 'INPUT') newInput.value = existingValue;
   }
+  if (existingTimeout) {
+    const tInput = document.getElementById('action-timeout');
+    if (tInput) tInput.value = existingTimeout;
+  }
 }
 
 function getActionParams() {
   const action = $('action-select').value;
   const p = document.getElementById('action-param');
-  if (p) {
+  const tInput = document.getElementById('action-timeout');
+  const timeoutMs = tInput ? Number(tInput.value) : NaN;
+
+  let params = {};
+  if (action === 'expect-dialog') {
+    const dlg = document.querySelector('input[name="dlg"]:checked');
+    const promptText = p ? p.value.trim() : '';
+    params = { action: dlg ? dlg.value : 'accept' };
+    if (promptText) params.text = promptText;
+  } else if (action === 'expect-new-tab') {
+    const pattern = p ? p.value.trim() : '';
+    if (pattern) params = { urlPattern: pattern, text: pattern };
+  } else if (action === 'switch-tab') {
+    const pattern = p ? p.value.trim() : '';
+    params = { urlPattern: pattern, text: pattern };
+  } else if (p) {
     const val = p.value.trim();
-    if (action === 'upload') return { file_paths: val, text: val, value: val };
-    return { text: val, value: val };
+    if (action === 'upload') {
+      params = { file_paths: val, text: val, value: val };
+    } else {
+      params = { text: val, value: val };
+    }
+  } else {
+    const dlg = document.querySelector('input[name="dlg"]:checked');
+    if (dlg) params = { action: dlg.value };
   }
-  const dlg = document.querySelector('input[name="dlg"]:checked');
-  if (dlg) return { action: dlg.value };
-  return {};
+
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    params.timeoutMs = timeoutMs;
+  }
+  return params;
 }
 
 // ── Validate ──────────────────────────────────────────────────────────────────
@@ -2483,6 +2760,18 @@ function renderStepList() {
   const list = $('step-list');
   Array.from(list.children).forEach(ch => { if (!ch.id || ch.id !== 'steps-empty') list.removeChild(ch); });
 
+  // Track tab context across steps for badge rendering
+  let currentTabIndex = 1;
+  const stepTabMap = {};
+  state.steps.forEach(step => {
+    const a = (step.action || '').replace(/-/g,'_');
+    if (a === 'expect_new_tab') currentTabIndex++;
+    else if (a === 'close_tab') currentTabIndex = Math.max(1, currentTabIndex - 1);
+    else if (a === 'switch_tab') { /* tab index controlled by switch logic */ }
+    stepTabMap[step.stepId] = currentTabIndex;
+  });
+  const hasMultipleTabs = currentTabIndex > 1 || Object.values(stepTabMap).some(t => t > 1);
+
   state.steps.forEach((step, idx) => {
     const wrap = document.createElement('div');
     wrap.className = 'pw-step-wrap';
@@ -2498,6 +2787,10 @@ function renderStepList() {
 
     const locShort = truncate(step.locator || '', 45);
     const badge = inferBadge(step.action);
+    const tabIdx = stepTabMap[step.stepId] || 1;
+    const tabBadgeHtml = hasMultipleTabs
+      ? `<span class="step-tab-badge tab-${Math.min(tabIdx, 5)}" title="Tab ${tabIdx}">Tab ${tabIdx}</span>`
+      : '';
 
     const stepRunState = state._stepRunStates[step.stepId];
     const runElapsedMs = (stepRunState === 'running' && step.stepId === state._pendingStepRunId && state._pendingStepRunStartedAt)
@@ -2521,6 +2814,7 @@ function renderStepList() {
       <div class="step-body">
         <div class="step-head">
           <span class="action-badge ${badge.cls}">${escHtml(badge.label)}</span>
+          ${tabBadgeHtml}
           <span class="step-label">${escHtml(step.action || '')}${step.params && step.params.text ? ' · "' + escHtml(String(step.params.text).slice(0, 28)) + '"' : ''}</span>
         </div>
         ${locShort ? `<div class="step-selector">${escHtml(locShort)}</div>` : ''}
@@ -2586,6 +2880,9 @@ function inferBadge(action) {
   if (action.startsWith('assert')) return { cls: 'assert', label: 'assert' };
   if (action === 'navigate' || action === 'navigate_back' || action === 'navigate-back') return { cls: 'nav', label: 'nav' };
   if (action.startsWith('wait')) return { cls: 'wait', label: 'wait' };
+  const a = action.replace(/-/g,'_');
+  if (['expect_new_tab','switch_tab','close_tab'].includes(a)) return { cls: 'tab', label: 'tab' };
+  if (['expect_dialog','dialog_handle'].includes(a)) return { cls: 'dialog', label: 'dialog' };
   return { cls: 'action', label: 'action' };
 }
 
@@ -3326,13 +3623,17 @@ $('switch-to-main').addEventListener('click', () => {
   send({ type: 'load_version', payload: { name: 'main' } });
 });
 
+// Native file open (macOS): runner replaces steps from chosen stepgraph.json.
+$('load-file-btn').addEventListener('click', () => {
+  send({ type: 'load_from_file', payload: {} });
+});
+
 $('save-version-btn').addEventListener('click', () => {
   if (!state.steps.length) return;
   const panel = $('save-version-panel');
   state.savingVersion = !state.savingVersion;
   if (state.savingVersion) {
     $('save-step-count').textContent = state.steps.length;
-    // Pre-fill with active version name if editing an existing one
     $('version-name-input').value = state.activeVersion !== 'main' ? state.activeVersion : '';
     panel.classList.add('show');
     $('version-name-input').focus();
@@ -3349,12 +3650,12 @@ $('cancel-save-version-btn').addEventListener('click', () => {
 $('confirm-save-version-btn').addEventListener('click', () => {
   const name = $('version-name-input').value.trim();
   if (!name) { $('version-name-input').focus(); return; }
-  const ids = state.steps.map(s => s.stepId);
-  if (!ids.length) return;
-  send({ type: 'save_version', payload: { name, stepIds: ids } });
+  if (!state.steps.length) return;
   $('save-version-panel').classList.remove('show');
   state.savingVersion = false;
   state.activeVersion = name;
+  // Open native folder picker on backend, save as <name>.json there.
+  send({ type: 'save_to_file', payload: { name } });
 });
 
 $('delete-version-btn').addEventListener('click', () => {
@@ -3399,6 +3700,9 @@ function onVersionLoaded(payload) {
     state.steps = payload.steps.map(s => ({ ...s, _uiStatus: s._uiStatus || 'pending' }));
     renderStepList();
     updateReplayControls();
+    if (payload.name && payload.name !== 'main') {
+      showToast(`Loaded "${payload.name}" — ${state.steps.length} steps`);
+    }
   }
   if (payload.name && payload.name !== 'main') {
     $('version-banner-name').textContent = payload.name;
@@ -3450,36 +3754,44 @@ $('save-llm-config-btn').addEventListener('click', () => {
 
 // ── Collapse / expand ─────────────────────────────────────────────────────────
 $('collapse-btn').addEventListener('click', () => {
-  root.classList.add('collapsed');
-  notifyParentResize(18);
+  // Tell parent to hide iframe and show its own restore button
+  notifyParentResize(44);
 });
-$('collapsed-tab').addEventListener('click', () => {
-  root.classList.remove('collapsed');
-  notifyParentResize(root.offsetWidth || 380);
+
+// Parent sends panel_expand when user clicks the restore button
+window.addEventListener('message', e => {
+  if (e.data && e.data.type === 'panel_expand') {
+    root.classList.remove('collapsed');
+  }
 });
 
 function notifyParentResize(width) {
-  try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'panel_resize', width }, '*'); } catch(_) {}
+  notifyParent({ type: 'panel_resize', width });
 }
 
-// ── Resize handle ─────────────────────────────────────────────────────────────
-let resizing = false, resizeStartX = 0, resizeStartW = 380;
+// ── Resize handle — drag is handled by parent page so it works outside iframe ──
 $('resize-handle').addEventListener('mousedown', e => {
-  resizing = true; resizeStartX = e.clientX; resizeStartW = root.offsetWidth;
-  document.addEventListener('mousemove', onResize);
-  document.addEventListener('mouseup', stopResize);
+  // Delegate drag to parent; parent relays move/end back via postMessage
+  notifyParent({ type: 'panel_resize_start', startX: e.screenX, startW: root.offsetWidth });
+  document.body.style.cursor = 'ew-resize';
+  document.body.style.userSelect = 'none';
   e.preventDefault();
 });
-function onResize(e) {
-  if (!resizing) return;
-  const newW = Math.min(600, Math.max(280, resizeStartW - (e.clientX - resizeStartX)));
-  root.style.width = newW + 'px';
-  notifyParentResize(newW);
-}
-function stopResize() {
-  resizing = false;
-  document.removeEventListener('mousemove', onResize);
-  document.removeEventListener('mouseup', stopResize);
+
+// Listen for move/end events relayed back from parent
+window.addEventListener('message', e => {
+  if (!e.data) return;
+  if (e.data.type === 'panel_resize_move') {
+    root.style.width = e.data.width + 'px';
+  }
+  if (e.data.type === 'panel_resize_end') {
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }
+});
+
+function notifyParent(msg) {
+  try { if (window.parent && window.parent !== window) window.parent.postMessage(msg, '*'); } catch(_) {}
 }
 
 // ── Status bar ────────────────────────────────────────────────────────────────
@@ -3833,6 +4145,100 @@ function laAddSystemMsg(txt) {
   msg.textContent = txt;
   thread.appendChild(msg);
   thread.scrollTop = thread.scrollHeight;
+}
+
+// ── Code tab ──────────────────────────────────────────────────────────────────
+let _lastGeneratedCode = '';
+
+function requestCode() {
+  if (state.steps.length === 0) {
+    const disp = $('code-display');
+    if (disp) disp.innerHTML = '<div class="code-empty">No steps recorded yet.<br>Record or add steps first, then come back here.</div>';
+    return;
+  }
+  const disp = $('code-display');
+  if (disp) disp.innerHTML = '<div class="code-empty"><span class="spinner"></span> Generating…</div>';
+  send({ type: 'get_code', payload: { format: 'typescript' } });
+}
+
+function renderCode(code) {
+  _lastGeneratedCode = code;
+  const disp = $('code-display');
+  if (!disp) return;
+  // Simple syntax highlight
+  const escaped = code
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const highlighted = escaped
+    .replace(/(\/\/[^\n]*)/g, '<span class="code-cmt">$1</span>')
+    .replace(/\b(import|export|const|let|var|async|await|function|return|from|test|expect|true|false|null|undefined|if|else|for|of|in|new|throw|try|catch)\b/g, '<span class="code-kw">$1</span>')
+    .replace(/('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`)/g, '<span class="code-str">$1</span>')
+    .replace(/\b(\d+)\b/g, '<span class="code-num">$1</span>');
+  disp.innerHTML = highlighted;
+}
+
+if ($('code-refresh-btn')) {
+  $('code-refresh-btn').addEventListener('click', requestCode);
+}
+
+if ($('code-copy-btn')) {
+  $('code-copy-btn').addEventListener('click', () => {
+    if (!_lastGeneratedCode) return;
+    navigator.clipboard.writeText(_lastGeneratedCode).then(() => {
+      const btn = $('code-copy-btn');
+      const orig = btn.innerHTML;
+      btn.textContent = '✓ Copied';
+      setTimeout(() => { btn.innerHTML = orig; }, 1500);
+    }).catch(() => {
+      // Fallback
+      const ta = document.createElement('textarea');
+      ta.value = _lastGeneratedCode;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    });
+  });
+}
+
+if ($('code-download-btn')) {
+  $('code-download-btn').addEventListener('click', () => {
+    if (!_lastGeneratedCode) return;
+    const blob = new Blob([_lastGeneratedCode], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'playwright-test.ts';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}
+
+// ── Toast notifications ───────────────────────────────────────────────────────
+function showToast(msg, level) {
+  let toast = document.getElementById('__pw_toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = '__pw_toast';
+    toast.style.cssText = 'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);max-width:90%;background:#1e2832;color:#e2e8f0;font:11px/1.4 ui-monospace,monospace;padding:7px 14px;border-radius:7px;z-index:99999;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,0.5);border:1px solid #334155;opacity:0;transition:opacity 0.2s;';
+    document.body.appendChild(toast);
+  }
+  if (level === 'error') {
+    toast.style.borderColor = '#f85149';
+    toast.style.color = '#f85149';
+  } else {
+    toast.style.borderColor = '#2dd4bf';
+    toast.style.color = '#e2e8f0';
+  }
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 4000);
+}
+
+// ── Folder picker ─────────────────────────────────────────────────────────────
+// Default save folder for versions / stepgraph; native dialog on macOS only.
+function requestChooseRunsDir() {
+  send({ type: 'choose_runs_dir', payload: {} });
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
